@@ -1,0 +1,23 @@
+[package]
+name = "mirria"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde_derive = "1.0.195"
+serde = "1.0.195"
+confy = { version = "0.6.0", features = ["yaml_conf"], default_features = false }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+reqwest = { version = "0.11", features = ["json", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7.4"
+clap = { version = "4.4.18", features = ["derive", "env"] }
+serde_json = "1.0.111"
+serde_path_to_error = "0.1.15"
+tower = "0.4.11"
+tower-http = { version = "0.5.1", features = ["trace"] }
+elasticsearch = "8.5.0-alpha.1"
+serde_qs = "0.12.0"
