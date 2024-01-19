@@ -36,6 +36,7 @@ services:
       - "TAKE_FILE_OWNERSHIP=true"
     volumes:
        - elasticsearch_data:/usr/share/elasticsearch/data:rw
+    command: bash -c 'sudo chmod g+rwx /usr/share/elasticsearch --verbose && chgrp 0 --verbose && chown elasticsearch /usr/share/elasticsearch --verbose && echo Starting up this shit && su -m elasticsearch /usr/share/elasticsearch'
     networks:
       - mirror
     healthcheck:

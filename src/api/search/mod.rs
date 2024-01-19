@@ -25,86 +25,48 @@ async fn search(
     Extension(ctx): Extension<Arc<Context>>,
     Query(query): Query<SearchQuery>,
     request: Request,
-) -> Result<Json<Vec<Value>>, StatusCode> {
+) -> Result<Json<Vec<Beatmapset>>, StatusCode> {
     let parsed_query: SearchQuery = serde_qs::from_str(request.uri().query().unwrap_or("")).unwrap();
-    let mapped_statuses: Vec<Value> = parsed_query
+    let mapped_statuses = parsed_query
         .statues
-        .unwrap_or(Vec::from(["ranked", "loved", "aproved", "qualified"].map(
+        .unwrap_or(Vec::from(["ranked", "loved", "aproved", "qualified"].map(|x| x.to_string()))).iter().map(
             |x| {
-                return x.to_string();
+                return format!("status = {}", x.to_string()).to_string();
             },
-        )))
-        .iter()
-        .map(|x| {
-            return json!({"match": { "status": x.to_string()}});
-        })
-        .collect();
+        ).collect::<Vec<String>>().join(" OR ");
 
     let sorting = match parsed_query.sort.unwrap_or("updated_desc".to_string()).as_str() {
-        "updated_desc" => json!({"last_updated": "desc"}),
-        "updated_asc" => json!({"last_updated": "asc"}),
-        "playcount" => json!({"play_count": "asc"}),
-        _ => json!({"last_updated": "desc"}),
+        "updated_asc" => "last_updated:asc",
+        "playcount" => "play_count:asc",
+        _ => "last_updated:desc",
     };
 
-    let q = json!({
-        "query": {
-            "bool": {
-                "filter": [{
-                    "bool": {
-                        "should": mapped_statuses
-                    }
-                }],
-                "must": [
-                    {
-                        "multi_match": {
-                            "query": query.query.unwrap_or("".to_string())
-                          }
-                    }
-                ]
-            }
-        },
-        "size": query.limit.unwrap_or(10),
-        "from": query.offset.unwrap_or(0),
-        "sort": sorting
-    });
-
-    info!("{}", q.clone().to_string());
-    let beatmap = ctx
-        .elasticsearch
-        .search(elasticsearch::SearchParts::Index(&["beatmapset"]))
-        .body(q.clone())
-        .send()
+    let response = ctx
+        .meili_client
+        .index("beatmapset")
+        .search()
+        .with_query((parsed_query.query.unwrap_or("".to_string())).as_str())
+        .with_filter(format!("{}", mapped_statuses).as_str())
+        .with_sort(&[sorting])
+        .with_offset(parsed_query.offset.unwrap_or(0) as usize)
+        .with_limit(parsed_query.limit.unwrap_or(50) as usize)
+        .execute::<Beatmapset>()
         .await;
 
-    if beatmap.is_err() {
-        let error = beatmap.unwrap_err();
+    if response.is_err() {
+        let error = response.unwrap_err();
         error!("{}", error);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    let beatmap = beatmap.unwrap();
+    let beatmapets = response.unwrap();
 
-    if !beatmap.status_code().is_success() {
-        info!("{:#?}", beatmap);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
 
-    let mut beatmap = beatmap.json::<Value>().await.unwrap();
-
-    let hits = beatmap
-        .get("hits")
-        .unwrap()
-        .get("hits")
-        .unwrap()
-        .as_array()
-        .unwrap();
+    let hits = beatmapets.hits.clone();
 
     return Ok(Json(
         hits.iter()
-            .map(|set| {
-                return set.get("_source").unwrap().clone();
-            })
+            .map(|set| set.clone().result)
             .clone()
             .collect(),
     ));

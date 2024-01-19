@@ -7,7 +7,7 @@ use std::{time::{Instant, UNIX_EPOCH, SystemTime}, fs::copy, sync::Arc};
 
 use clap::Parser;
 use confy::ConfyError;
-use elasticsearch::{http::transport::Transport, Elasticsearch};
+use meilisearch_sdk::Client;
 use tracing::{info, error, level_filters::LevelFilter};
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -102,22 +102,15 @@ async fn main() {
 
 
     info!("Client has been initialized");
-    let transport = Transport::single_node(&configuration.clone().elasticsearch_url).unwrap();
+    let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));
 
-    let elastic_client = Elasticsearch::new(transport);
-
-    info!("Elasticsearch client has been initialized");
-
-    let ping_response = elastic_client.ping().send().await;
-    if ping_response.is_err() {
-        error!("Error while pinging Elasticsearch");
-        return;
-    }
-    info!("Elasticsearch is up and running");
+    meiliclient.index("beatmapset").set_filterable_attributes(["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "status"]).await.unwrap();
+    meiliclient.index("beatmapset").set_sortable_attributes(["last_updated", "play_count"]).await.unwrap();
+    info!("Meiliclient is up and running");
 
     let context = Context {
         config: Arc::new(configuration.clone()),
-        elasticsearch: Arc::new(elastic_client),
+        meili_client: Arc::new(meiliclient),
         osu: client.unwrap()
     };
 

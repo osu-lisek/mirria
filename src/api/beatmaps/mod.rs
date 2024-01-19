@@ -7,40 +7,37 @@ use axum::{
 use serde_json::{json, Value};
 use tracing::{error, info};
 
-use crate::{crawler::Context, osu::types::Beatmapset};
+use crate::{crawler::Context, osu::types::{Beatmapset, Beatmap}};
 
 async fn get_beatmap_by_id(
     Extension(ctx): Extension<Arc<Context>>,
     Path(id): Path<String>,
-) -> Result<Json<Value>, StatusCode> {
-    let beatmap = ctx
-        .elasticsearch
-        .search(elasticsearch::SearchParts::Index(&["beatmap"]))
-        .body(json!({
-            "query": {
-                "match": {
-                    "id": id
-                }
-            }
-        }))
-        .send().await;
+) -> Result<Json<Beatmap>, StatusCode> {
+    let response = ctx.meili_client
+    .index("beatmapset")
+    .search()
+    .with_filter(format!("beatmaps.id = {}", id).as_str())
+    .execute::<Beatmapset>()
+    .await;
 
-    if beatmap.is_err() {
-        let error = beatmap.unwrap_err();
+    if response.is_err() {
+        let error = response.unwrap_err();
         error!("{}", error);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    let beatmap = beatmap.unwrap();
-    let mut beatmap = beatmap.json::<Value>().await.unwrap();
+    let beatmapset = response.unwrap();
     
-    let hits = beatmap.get("hits").unwrap().get("hits").unwrap().as_array().unwrap();
+    let hits = beatmapset.hits;
     if hits.is_empty() {
         return Err(StatusCode::NOT_FOUND);
     }
 
 
-    let beatmap = hits.first().unwrap().get("_source").unwrap();
+    let beatmapset = &hits.first().unwrap().result;
+
+    //Finding the beatmap
+    let beatmap = beatmapset.beatmaps.iter().find(|x| x.id.to_string() == id).unwrap();
     return Ok(Json(beatmap.clone()))
 }
 
@@ -48,36 +45,31 @@ async fn get_beatmap_by_id(
 async fn get_beatmap_by_hash(
     Extension(ctx): Extension<Arc<Context>>,
     Path(checksum): Path<String>,
-) -> Result<Json<Value>, StatusCode> {
-    let beatmap = ctx
-        .elasticsearch
-        .search(elasticsearch::SearchParts::Index(&["beatmapset"]))
-        .body(json!({
-            "query": {
-                "match": {
-                    "beatmaps.checksum": checksum
-                }
-            }
-        }))
-        .send().await;
+) -> Result<Json<Beatmapset>, StatusCode> {
+    let response = ctx.meili_client
+    .index("beatmapset")
+    .search()
+    .with_filter(format!("beatmaps.checksum = {}", checksum).as_str())
+    .execute::<Beatmapset>()
+    .await;
 
-    if beatmap.is_err() {
-        let error = beatmap.unwrap_err();
+    if response.is_err() {
+        let error = response.unwrap_err();
         error!("{}", error);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    let beatmap = beatmap.unwrap();
-    let mut beatmap = beatmap.json::<Value>().await.unwrap();
+    let beatmapset = response.unwrap();
     
-    let hits = beatmap.get("hits").unwrap().get("hits").unwrap().as_array().unwrap();
+    let hits = beatmapset.hits;
     if hits.is_empty() {
         return Err(StatusCode::NOT_FOUND);
     }
 
 
-    let beatmap = hits.first().unwrap().get("_source").unwrap();
-    return Ok(Json(beatmap.clone()))
+    let beatmapset = &hits.first().unwrap().result;
+
+    return Ok(Json(beatmapset.clone()))
 }
 
 

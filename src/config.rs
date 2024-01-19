@@ -3,13 +3,11 @@ use serde_derive::{Serialize, Deserialize};
 pub const CONFIG_VERSION: i32 = 3;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct Cursors {
-    pub graveyard: String,
-    pub ranked: String,
-    pub loved: String,
-    pub approved: String,
-    pub qualified: String
+pub struct Meili {
+    pub url: String,
+    pub key: String
 }
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Configuration {
@@ -19,15 +17,25 @@ pub struct Configuration {
     pub osu_access_token: String,
     pub osu_refresh_token: String,
     pub osu_token_expires_at: u64,
-    pub cursors: Cursors,
-    pub elasticsearch_url: String,
+    pub cursor: String,
+    pub meilisearch: Meili,
     pub beatmaps_folder: String
 }
 
 
 impl ::std::default::Default for Configuration  {
     fn default() -> Self {
-        Self { version: CONFIG_VERSION, osu_username: Default::default(), osu_password: Default::default(), osu_access_token: Default::default(), osu_refresh_token: Default::default(), cursors: Default::default(), osu_token_expires_at: Default::default(), elasticsearch_url: Default::default(), beatmaps_folder: Default::default() }
+        Self {
+            version: CONFIG_VERSION,
+            osu_username: String::new(),
+            osu_password: String::new(),
+            osu_access_token: String::new(),
+            osu_refresh_token: String::new(),
+            osu_token_expires_at: 0,
+            cursor: String::new(),
+            meilisearch: Default::default(),
+            beatmaps_folder: String::new()
+        }
     }
 }
 
