@@ -79,7 +79,7 @@ async fn crawl_search(context: &Context) {
             break;
         }
 
-        let _ = time::sleep(Duration::from_secs(15));
+        let _ = time::sleep(Duration::from_secs(10)).await;
     }
 }
 
