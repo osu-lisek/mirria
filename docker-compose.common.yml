@@ -1,0 +1,7 @@
+
+services:
+  mirria:
+    build:
+      dockerfile: Dockerfile
+      context: .
+    restart: on-failture

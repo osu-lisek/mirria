@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  api:
+    extends:
+      file: docker-compose.common.yml
+      service: mirria
+    environment:
+      - APP_COMPONENT=api
+  crawler:
+    extends:
+      file: docker-compose.common.yml
+      service: mirria
+    environment:
+      - APP_COMPONENT=crawler
