@@ -2,7 +2,7 @@ use std::{sync::Arc, time::{Duration, Instant}};
 
 use elasticsearch::{Elasticsearch, indices::{IndicesCreateParts, IndicesExistsParts}};
 use tokio::{sync::Mutex, time};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     config::Configuration,
@@ -99,6 +99,10 @@ async fn crawl_search(context: &Context) {
             }
 
             for map in set.beatmaps {
+                if map.checksum.is_none() {
+                    warn!("Beatmap {} has null checksum, insertion of this beatmap will be ignored", map.id);
+                    continue;
+                }
                 let _ = context.elasticsearch.index(elasticsearch::IndexParts::Index("beatmap")).body(&map).send().await;
             }
         }

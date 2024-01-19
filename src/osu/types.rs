@@ -151,7 +151,7 @@ pub struct Beatmap {
     pub playcount: i64,
     pub ranked: i64,
     pub url: String,
-    pub checksum: String,
+    pub checksum: Option<String>,
     #[serde(rename = "max_combo")]
     pub max_combo: Option<i64>,
 }
