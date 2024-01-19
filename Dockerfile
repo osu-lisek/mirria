@@ -1,12 +1,12 @@
-FROM rust:1.75.0-buster AS build
+FROM rust:1.75-buster AS builder
 
-WORKDIR /app
-
+WORKDIR /usr/src/mirria
+RUN --mount=type=cache,target=/usr/local/cargo,from=rust:latest,source=/usr/local/cargo \
+    --mount=type=cache,target=target
 COPY . .
-RUN cargo build --release
+RUN cargo install --path . -j 4
 
-FROM debian:12-slim
-WORKDIR /app
-COPY --from=build /app/target/release/mirria .
-
-ENTRYPOINT [ "/app/target/release/mirria" ]
+FROM rust:1.75-buster
+RUN apt update -y && apt install -y openssl && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/cargo/bin/mirria /usr/local/bin/mirria
+ENTRYPOINT [ "mirria" ]

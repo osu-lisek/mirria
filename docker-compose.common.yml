@@ -4,4 +4,5 @@ services:
     build:
       dockerfile: Dockerfile
       context: .
-    restart: on-failture
+    volumes:
+      - config.yml:/root/.config/mirria/default-config.yml
