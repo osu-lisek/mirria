@@ -26,7 +26,7 @@ async fn search(
     Query(query): Query<SearchQuery>,
     request: Request,
 ) -> Result<Json<Vec<Value>>, StatusCode> {
-    let parsed_query: SearchQuery = serde_qs::from_str(request.uri().query().unwrap()).unwrap();
+    let parsed_query: SearchQuery = serde_qs::from_str(request.uri().query().unwrap_or("")).unwrap();
     let mapped_statuses: Vec<Value> = parsed_query
         .statues
         .unwrap_or(Vec::from(["ranked", "loved", "aproved", "qualified"].map(
