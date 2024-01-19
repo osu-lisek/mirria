@@ -12,7 +12,7 @@ services:
     networks:
       - mirror
     depends_on:
-      elasticsearch:
+      meilisearch:
         condition: service_healthy
   crawler:
     extends:
@@ -23,7 +23,7 @@ services:
     networks:
       - mirror
     depends_on:
-      elasticsearch:
+      meilisearch:
         condition: service_healthy
   meilisearch:
     image: getmeili/meilisearch:v1.6
