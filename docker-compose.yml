@@ -7,6 +7,8 @@ services:
       service: mirria
     environment:
       - APP_COMPONENT=api
+    ports:
+      - 7788:3000
   crawler:
     extends:
       file: docker-compose.common.yml
