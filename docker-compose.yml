@@ -11,6 +11,8 @@ services:
       - 7788:3000
     networks:
       - mirror
+    depends_on:
+      - elasticsearch
   crawler:
     extends:
       file: docker-compose.common.yml
@@ -19,6 +21,8 @@ services:
       - APP_COMPONENT=crawler
     networks:
       - mirror
+    depends_on:
+      - elasticsearch
   elasticsearch:
     image: elasticsearch:8.12.0
     environment:
@@ -32,6 +36,10 @@ services:
        - elasticsearch_data:/usr/share/elasticsearch/data:rw
     networks:
       - mirror
+    healthcheck:
+      interval: 10s
+      retries: 80
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:8200/
 
 networks:
   mirror:
