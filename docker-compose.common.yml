@@ -5,5 +5,5 @@ services:
       dockerfile: Dockerfile
       context: .
     volumes:
-      - ./config:/root/.config/mirria/default-config.yml
+      - ./config:/root/.config/mirria
       - ./data:/root/data
