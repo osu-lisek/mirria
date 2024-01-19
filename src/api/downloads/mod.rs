@@ -32,7 +32,7 @@ async fn download(
     
     Response::builder()
     .header("Content-Type", "application/x-osu-beatmap-archive")
-    .header("Content-Disposition", format!("attachment; filename={}.osr", id))
+    .header("Content-Disposition", format!("attachment; filename={}.osz", id))
     .body(Body::from(content))
     .unwrap()    
 }
