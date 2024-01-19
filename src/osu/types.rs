@@ -59,7 +59,7 @@ pub struct Beatmapset {
     #[serde(rename = "last_updated")]
     pub last_updated: String,
     #[serde(rename = "legacy_thread_url")]
-    pub legacy_thread_url: String,
+    pub legacy_thread_url: Option<String>,
     #[serde(rename = "nominations_summary")]
     pub nominations_summary: NominationsSummary,
     pub ranked: i64,
