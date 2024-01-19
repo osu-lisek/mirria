@@ -25,32 +25,19 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
-  elasticsearch:
-    image: elasticsearch:8.12.0
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
     environment:
-      - node.name=es01
-      - bootstrap.memory_lock=true
-      - xpack.security.enabled=false
-      - discovery.type=single-node
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "TAKE_FILE_OWNERSHIP=true"
+      - MEILI_MASTER_KEY=phUgbRnzVrhRoucIrSwxqfYbfPG4dP879t9E7n5U2
     volumes:
-       - elasticsearch_data:/usr/share/elasticsearch/data:rw
-    command: bash -c 'sudo chmod g+rwx /usr/share/elasticsearch --verbose && chgrp 0 --verbose && chown elasticsearch /usr/share/elasticsearch --verbose && echo Starting up this shit && su -m elasticsearch /usr/share/elasticsearch'
+       - /mnt/mirror/meili/:/meili_data:rw
     networks:
       - mirror
     healthcheck:
       interval: 10s
       retries: 80
-      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:8200/
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:7700/
 
 networks:
   mirror:
     driver: bridge
-volumes:
-  elasticsearch_data:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: '/mnt/mirror/elasticsearch'
