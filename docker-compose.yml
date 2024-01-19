@@ -9,9 +9,37 @@ services:
       - APP_COMPONENT=api
     ports:
       - 7788:3000
+    networks:
+      - mirror
   crawler:
     extends:
       file: docker-compose.common.yml
       service: mirria
     environment:
       - APP_COMPONENT=crawler
+    networks:
+      - mirror
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    environment:
+      - node.name=es01
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "TAKE_FILE_OWNERSHIP=true"
+    volumes:
+       - elasticsearch_data:/usr/share/elasticsearch/data:rw
+    networks:
+      - mirror
+
+networks:
+  mirror:
+    driver: bridge
+volumes:
+  elasticsearch_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: '/mnt/mirror/elasticsearch'
