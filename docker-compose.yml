@@ -12,7 +12,8 @@ services:
     networks:
       - mirror
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
   crawler:
     extends:
       file: docker-compose.common.yml
@@ -22,7 +23,8 @@ services:
     networks:
       - mirror
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
   elasticsearch:
     image: elasticsearch:8.12.0
     environment:
