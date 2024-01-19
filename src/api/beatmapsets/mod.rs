@@ -4,8 +4,8 @@ use axum::{
     Extension, Json, Router, extract::Path, http::StatusCode,
     routing::get, response::Result
 };
-use serde_json::{json, Value};
-use tracing::{error, info};
+
+use tracing::{error};
 
 use crate::{crawler::Context, osu::types::Beatmapset};
 

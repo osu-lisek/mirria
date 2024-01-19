@@ -2,7 +2,7 @@ use std::{sync::Arc, time::{Duration, Instant}};
 
 use meilisearch_sdk::Client;
 use tokio::{sync::Mutex, time};
-use tracing::{info, warn, error};
+use tracing::{info, error};
 
 use crate::{
     config::Configuration,
@@ -66,7 +66,7 @@ async fn crawl_search(context: &Context) {
             confy::store("mirria", None, config).unwrap();
             info!("Saving cursor to config");
         }
-        let cursor_string = beatmaps.cursor_string.to_string();
+        let _cursor_string = beatmaps.cursor_string.to_string();
 
         let crawled_beatmaps = beatmaps.beatmapsets;
         info!("Crawled {} beatmaps", crawled_beatmaps.len());

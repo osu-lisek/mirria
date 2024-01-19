@@ -1,6 +1,6 @@
-use std::{sync::Arc, env::join_paths, path::Path as path_sys};
+use std::{sync::Arc, path::Path as path_sys};
 
-use axum::{extract::Path, Extension, Router, routing::get, response::{IntoResponse, Response}, body::Body};
+use axum::{extract::Path, Extension, Router, routing::get, response::{Response}, body::Body};
 use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tracing::error;

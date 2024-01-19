@@ -1,15 +1,15 @@
-use std::{convert::Infallible, sync::Arc};
+use std::{sync::Arc};
 
 use axum::{
-    extract::{Path, Query, Request},
+    extract::{Query, Request},
     http::StatusCode,
     response::Result,
     routing::get,
     Extension, Json, Router,
 };
 use serde_derive::Deserialize;
-use serde_json::{json, Value};
-use tracing::{error, info};
+
+use tracing::{error};
 
 use crate::{crawler::Context, osu::types::Beatmapset};
 #[derive(Deserialize, Debug)]
@@ -23,7 +23,7 @@ struct SearchQuery {
 
 async fn search(
     Extension(ctx): Extension<Arc<Context>>,
-    Query(query): Query<SearchQuery>,
+    Query(_query): Query<SearchQuery>,
     request: Request,
 ) -> Result<Json<Vec<Beatmapset>>, StatusCode> {
     let parsed_query: SearchQuery = serde_qs::from_str(request.uri().query().unwrap_or("")).unwrap();

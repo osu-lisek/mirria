@@ -3,7 +3,7 @@ mod osu;
 mod crawler;
 mod api;
 
-use std::{time::{Instant, UNIX_EPOCH, SystemTime}, fs::copy, sync::Arc};
+use std::{time::Instant, fs::copy, sync::Arc};
 
 use clap::Parser;
 use confy::ConfyError;
@@ -95,11 +95,12 @@ async fn main() {
         info!("Creating token");
         let configuration: Configuration = configuration.clone();
         client = Some(OsuClient::from_credentials(configuration.clone(), configuration.osu_username, configuration.osu_password).await.await.unwrap());
+
+        info!("Token has been created");
     }
 
     let configuration: Configuration = configuration.clone();
     client = Some(OsuClient::from_tokens(configuration.clone(), configuration.clone().osu_access_token, configuration.clone().osu_refresh_token).await);
-
 
     info!("Client has been initialized");
     let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));

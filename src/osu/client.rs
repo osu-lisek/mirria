@@ -1,4 +1,4 @@
-use std::{future::{Future, self}, io::{Error, ErrorKind}, time::{UNIX_EPOCH, SystemTime}, borrow::BorrowMut, fs::write, path::Path, env::join_paths};
+use std::{future::{Future, self}, io::{Error, ErrorKind}, time::{UNIX_EPOCH, SystemTime}, borrow::BorrowMut, fs::write, path::Path};
 
 use serde_derive::Deserialize;
 use tokio::fs::File;
@@ -6,7 +6,7 @@ use tracing::{info, error};
 
 use crate::config::Configuration;
 
-use super::types::{SearchResponse};
+use super::types::SearchResponse;
 
 
 #[derive(Debug, Clone)]
@@ -18,7 +18,6 @@ pub struct OsuClient {
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
-    pub token_type: String,
     pub access_token: String,
     pub expires_in: u64,
     pub refresh_token: String,
