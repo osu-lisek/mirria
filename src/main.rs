@@ -105,7 +105,7 @@ async fn main() {
     info!("Client has been initialized");
     let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));
 
-    meiliclient.index("beatmapset").set_filterable_attributes(["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "status"]).await.unwrap();
+    meiliclient.index("beatmapset").set_filterable_attributes(["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await.unwrap();
     meiliclient.index("beatmapset").set_sortable_attributes(["last_updated", "play_count"]).await.unwrap();
     info!("Meiliclient is up and running");
 

@@ -9,7 +9,7 @@ use axum::{
 };
 use serde_derive::Deserialize;
 
-use tracing::{error};
+use tracing::{error, info};
 
 use crate::{crawler::Context, osu::types::Beatmapset};
 #[derive(Deserialize, Debug)]
@@ -18,7 +18,8 @@ struct SearchQuery {
     pub limit: Option<i32>,
     pub offset: Option<i32>,
     pub statues: Option<Vec<String>>,
-    pub sort: Option<String>
+    pub sort: Option<String>,
+    pub modes: Option<Vec<String>>
 }
 
 async fn search(
@@ -34,6 +35,13 @@ async fn search(
                 return format!("status = {}", x.to_string()).to_string();
             },
         ).collect::<Vec<String>>().join(" OR ");
+    let modes = parsed_query.modes.unwrap_or(vec!["standard".to_string(), "taiko".to_string(), "fruits".to_string(), "mania".to_string()]).iter().map(
+        |x| {
+            return format!("beatmaps.mode = '{}'", x.to_string()).to_string();
+        },
+    ).collect::<Vec<String>>().join(" OR ");
+
+    info!("{} AND {}", mapped_statuses, modes);
 
     let sorting = match parsed_query.sort.unwrap_or("updated_desc".to_string()).as_str() {
         "updated_asc" => "last_updated:asc",
@@ -46,7 +54,7 @@ async fn search(
         .index("beatmapset")
         .search()
         .with_query((parsed_query.query.unwrap_or("".to_string())).as_str())
-        .with_filter(format!("{}", mapped_statuses).as_str())
+        .with_filter(format!("{} AND {}", mapped_statuses, modes).as_str())
         .with_sort(&[sorting])
         .with_offset(parsed_query.offset.unwrap_or(0) as usize)
         .with_limit(parsed_query.limit.unwrap_or(50) as usize)
