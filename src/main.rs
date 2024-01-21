@@ -122,6 +122,7 @@ async fn main() {
 
     meiliclient.index("beatmapset").set_filterable_attributes(["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await.unwrap();
     meiliclient.index("beatmapset").set_sortable_attributes(["last_updated", "play_count"]).await.unwrap();
+    meiliclient.index("downloads").set_filterable_attributes(["id"]).await.unwrap();
     info!("Meiliclient is up and running");
 
     let context = Context {
