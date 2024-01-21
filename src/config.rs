@@ -39,6 +39,12 @@ impl ::std::default::Default for Configuration  {
     }
 }
 
+impl Configuration {
+    pub fn has_authorization(&self) -> bool {
+        return !self.osu_access_token.is_empty() && !self.osu_refresh_token.is_empty();
+    }
+}
+
 #[derive(clap::Parser, Clone)]
 pub struct Config {
     #[clap(long, env)]
