@@ -2,6 +2,7 @@ mod config;
 mod osu;
 mod crawler;
 mod api;
+mod ops;
 
 use std::{time::Instant, fs::copy, sync::Arc};
 
@@ -11,7 +12,7 @@ use meilisearch_sdk::Client;
 use tracing::{info, error, level_filters::LevelFilter};
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::{config::{Configuration, CONFIG_VERSION, Config}, crawler::Context};
+use crate::{config::{Configuration, CONFIG_VERSION, Config}, crawler::Context, osu::client::log_in_using_credentials};
 use crate::osu::client::{OsuClient, OsuApi};
 
 #[tokio::main]
@@ -89,18 +90,32 @@ async fn main() {
     info!("Configuration has been loaded");
 
 
-    let mut client: Option<OsuClient> = None;
+    let mut access_token = configuration.osu_access_token.clone();
+    let mut refresh_token = configuration.osu_refresh_token.clone();
 
-    if configuration.osu_access_token == "" || configuration.osu_refresh_token == "" {
+    if !configuration.has_authorization() {
         info!("Creating token");
         let configuration: Configuration = configuration.clone();
-        client = Some(OsuClient::from_credentials(configuration.clone(), configuration.osu_username, configuration.osu_password).await.await.unwrap());
-
+        let response = log_in_using_credentials(configuration.clone(), configuration.osu_username, configuration.osu_password).await;
+        
+        if response.is_err() {
+            error!("Error while creating token");
+            error!("{:#?}", response.unwrap_err());
+            return;
+        }
+        let response = response.unwrap();
+        access_token = response.access_token;
+        refresh_token = response.refresh_token;
         info!("Token has been created");
     }
 
-    let configuration: Configuration = configuration.clone();
-    client = Some(OsuClient::from_tokens(configuration.clone(), configuration.clone().osu_access_token, configuration.clone().osu_refresh_token).await);
+    let osu_client = OsuClient::from_tokens(configuration.clone(), access_token, refresh_token).await;    
+    
+    if osu_client.is_err() {
+        error!("Error while creating osu client");
+        error!("{:#?}", osu_client.unwrap_err());
+        return;
+    }
 
     info!("Client has been initialized");
     let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));
@@ -112,7 +127,7 @@ async fn main() {
     let context = Context {
         config: Arc::new(configuration.clone()),
         meili_client: Arc::new(meiliclient),
-        osu: client.unwrap()
+        osu: osu_client.unwrap()
     };
 
     let configuration_env: Config = Config::parse();
