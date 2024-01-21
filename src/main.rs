@@ -4,7 +4,7 @@ mod crawler;
 mod api;
 mod ops;
 
-use std::{time::{Instant, Duration}, fs::copy, sync::Arc};
+use std::{time::Instant, fs::copy, sync::Arc};
 
 use clap::Parser;
 use confy::ConfyError;
