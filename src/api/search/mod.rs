@@ -54,7 +54,7 @@ async fn search(
         .index("beatmapset")
         .search()
         .with_query((parsed_query.query.unwrap_or("".to_string())).as_str())
-        .with_filter(format!("{} AND {}", mapped_statuses, modes).as_str())
+        .with_filter(format!("({}) AND {}", mapped_statuses, modes).as_str())
         .with_sort(&[sorting])
         .with_offset(parsed_query.offset.unwrap_or(0) as usize)
         .with_limit(parsed_query.limit.unwrap_or(50) as usize)
