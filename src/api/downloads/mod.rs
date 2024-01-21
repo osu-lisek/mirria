@@ -9,8 +9,7 @@ use tracing::{error, info};
 use crate::{crawler::Context, osu::client::OsuApi, ops::{beatmapset::get_beatmapset_by_id, DownloadIndex}};
 
 async fn create_new_index(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex> {
-    let mut download_index: Option<DownloadIndex> = None;
-    download_index = Some(DownloadIndex { id: id, date: Local::now().timestamp()});
+    let download_index = Some(DownloadIndex { id: id, date: Local::now().timestamp()});
     if let Err(err) = ctx.meili_client.index("downloads").add_documents(&[download_index.clone().unwrap()], Some("id")).await {
         error!("Failed to create index: {}", err);
     }else{

@@ -4,7 +4,7 @@ mod crawler;
 mod api;
 mod ops;
 
-use std::{time::Instant, fs::copy, sync::Arc};
+use std::{time::{Instant, Duration}, fs::copy, sync::Arc};
 
 use clap::Parser;
 use confy::ConfyError;
@@ -14,6 +14,38 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::{config::{Configuration, CONFIG_VERSION, Config}, crawler::Context, osu::client::log_in_using_credentials};
 use crate::osu::client::{OsuClient, OsuApi};
+
+async fn ensure_filters(client: Client, index: impl ToString, filters: &[&str]) {
+    let filter = client.get_index(index.to_string()).await;
+
+    match filter {
+        Ok(filter) => {
+            let mut filters_to_add = Vec::new();
+            let filter_names = filter.get_filterable_attributes().await.unwrap();
+            for &filter_name in filters {
+                if !filter_names.contains(&filter_name.to_string()) {
+                    filters_to_add.push(filter_name);
+                }
+            }
+
+            if !filters_to_add.is_empty() {
+                info!("Updating filters");
+                let update_filter_task = filter.set_filterable_attributes(filters).await;
+                match update_filter_task {
+                    Err(err) => {
+                        error!("Failed to run update task, {}", err)
+                    },
+                    Ok(task) => {
+                        info!("Task has been enqueued, id: {}.", task.task_uid);
+                    }
+                }
+            }
+        },
+        Err(_) => {
+            
+        }
+    };
+}
 
 #[tokio::main]
 async fn main() {
@@ -120,9 +152,12 @@ async fn main() {
     info!("Client has been initialized");
     let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));
 
-    meiliclient.index("beatmapset").set_filterable_attributes(["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await.unwrap();
-    meiliclient.index("beatmapset").set_sortable_attributes(["last_updated", "play_count"]).await.unwrap();
-    meiliclient.index("downloads").set_filterable_attributes(["id"]).await.unwrap();
+
+    ensure_filters(meiliclient.clone(), "beatmapset", &["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await;
+    ensure_filters(meiliclient.clone(), "downloads", &["id"]).await;
+    
+
+
     info!("Meiliclient is up and running");
 
     let context = Context {
