@@ -71,7 +71,7 @@ async fn ensure_sort(client: Client, index: impl ToString, sort: &[&str]) {
                 }
             }
 
-            info!("Filterable atrributes of {}: {:#?}", index.to_string(), filter_names);
+            info!("Sortable atrributes of {}: {:#?}", index.to_string(), filter_names);
 
             if !filters_to_add.is_empty() {
                 info!("Updating sortable attributes");
