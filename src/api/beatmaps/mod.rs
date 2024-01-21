@@ -1,81 +1,57 @@
 use std::sync::Arc;
 
 use axum::{
-    Extension, Json, Router, extract::{Path}, http::StatusCode,
-    routing::get, response::Result
+    extract::Path, http::StatusCode, response::Result, routing::get, Extension, Json, Router,
 };
 
-use tracing::{error};
-
-use crate::{crawler::Context, osu::types::{Beatmapset, Beatmap}};
+use crate::{
+    crawler::Context,
+    ops::{beatmaps::{get_beatmap_by_id as get_beatmap_from_db, DatabaseError}, beatmapset::get_beatmapset_by_hash},
+    osu::types::{Beatmap, Beatmapset},
+};
 
 async fn get_beatmap_by_id(
     Extension(ctx): Extension<Arc<Context>>,
     Path(id): Path<String>,
 ) -> Result<Json<Beatmap>, StatusCode> {
-    let response = ctx.meili_client
-    .index("beatmapset")
-    .search()
-    .with_filter(format!("beatmaps.id = {}", id).as_str())
-    .execute::<Beatmapset>()
-    .await;
+    let response = get_beatmap_from_db(ctx, id.parse::<i64>().unwrap_or(0)).await;
 
     if response.is_err() {
         let error = response.unwrap_err();
-        error!("{}", error);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return match error {
+            DatabaseError::RecordNotFound => return Err(StatusCode::NOT_FOUND),
+            
+            _ => Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 
-    let beatmapset = response.unwrap();
-    
-    let hits = beatmapset.hits;
-    if hits.is_empty() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let beatmap = response.unwrap();
 
-
-    let beatmapset = &hits.first().unwrap().result;
-
-    //Finding the beatmap
-    let beatmap = beatmapset.beatmaps.iter().find(|x| x.id.to_string() == id).unwrap();
-    return Ok(Json(beatmap.clone()))
+    return Ok(Json(beatmap.clone()));
 }
-
 
 async fn get_beatmap_by_hash(
     Extension(ctx): Extension<Arc<Context>>,
     Path(checksum): Path<String>,
 ) -> Result<Json<Beatmapset>, StatusCode> {
-    let response = ctx.meili_client
-    .index("beatmapset")
-    .search()
-    .with_filter(format!("beatmaps.checksum = {}", checksum).as_str())
-    .execute::<Beatmapset>()
-    .await;
+    let response = get_beatmapset_by_hash(ctx, checksum).await;
 
     if response.is_err() {
         let error = response.unwrap_err();
-        error!("{}", error);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return match error {
+            DatabaseError::RecordNotFound => return Err(StatusCode::NOT_FOUND),
+            
+            _ => Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 
     let beatmapset = response.unwrap();
-    
-    let hits = beatmapset.hits;
-    if hits.is_empty() {
-        return Err(StatusCode::NOT_FOUND);
-    }
 
-
-    let beatmapset = &hits.first().unwrap().result;
-
-    return Ok(Json(beatmapset.clone()))
+    return Ok(Json(beatmapset.clone()));
 }
-
-
 
 pub fn serve() -> Router {
     return Router::new()
-    .route("/api/v1/beatmaps/md5/:checksum", get(get_beatmap_by_hash))
-    .route("/api/v1/beatmaps/:id", get(get_beatmap_by_id));
+        .route("/api/v1/beatmaps/md5/:checksum", get(get_beatmap_by_hash))
+        .route("/api/v1/beatmaps/:id", get(get_beatmap_by_id));
 }

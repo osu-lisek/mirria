@@ -5,35 +5,27 @@ use axum::{
     routing::get, response::Result
 };
 
-use tracing::{error};
 
-use crate::{crawler::Context, osu::types::Beatmapset};
+use crate::{crawler::Context, osu::types::Beatmapset, ops::{beatmapset::get_beatmapset_by_id as fetch_beatmapset_by_id, beatmaps::DatabaseError}};
 
 async fn get_beatmapset_by_id(
     Extension(ctx): Extension<Arc<Context>>,
     Path(id): Path<String>,
 ) -> Result<Json<Beatmapset>, StatusCode> {
-    let search_result = ctx.meili_client.index("beatmapset")
-    .search()
-    .with_filter(format!("id = {}", id).as_str())
-    .execute::<Beatmapset>()
-    .await;
+    let response = fetch_beatmapset_by_id(ctx, id.parse::<i64>().unwrap_or(0)).await;
 
-    if search_result.is_err() {
-        let error = search_result.unwrap_err();
-        error!("{}", error);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    if response.is_err() {
+        let error = response.unwrap_err();
+        return match error {
+            DatabaseError::RecordNotFound => return Err(StatusCode::NOT_FOUND),
+            
+            _ => Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 
-    let hits = search_result.unwrap().hits;
-    
-    if hits.clone().is_empty() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let beatmapset = response.unwrap();
 
-
-    let beatmap = &hits.first().unwrap().result;
-    return Ok(Json(beatmap.clone()))
+    return Ok(Json(beatmapset))
 }
 
 
