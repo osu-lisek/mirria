@@ -39,7 +39,7 @@ async fn get_index_or_create(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex
 
     let index = index_response.unwrap();
 
-    if index.total_hits.unwrap_or(0) < 1 {
+    if index.hits.len() < 1 {
         //Creating new index
         let download_index = create_new_index(ctx.clone(), id).await;
 
