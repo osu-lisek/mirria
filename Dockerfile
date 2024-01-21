@@ -1,12 +1,18 @@
-FROM rust:1.75-buster AS builder
+FROM rust as rust-builder
+WORKDIR /usr/src/app
+COPY ./Cargo.toml .
+COPY ./Cargo.lock .
+RUN mkdir ./src && echo 'fn main() { println!("Dummy!"); }' > ./src/main.rs
+RUN cargo build --release
+RUN rm -rf ./src
+COPY ./src ./src
+RUN touch -a -m ./src/main.rs
+RUN cargo build --release
 
-WORKDIR /usr/src/mirria
-RUN --mount=type=cache,target=/usr/local/cargo,from=rust:latest,source=/usr/local/cargo \
-    --mount=type=cache,target=target
-COPY . .
-RUN cargo install --path . -j 4
+FROM rust:slim-bookworm
 
-FROM rust:1.75-buster
-RUN apt update -y && apt install -y openssl && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/cargo/bin/mirria /usr/local/bin/mirria
-ENTRYPOINT [ "mirria" ]
+RUN apt update -y && apt install -y openssl libssl3 && rm -rf /var/lib/apt/lists/*
+
+COPY --from=rust-builder /usr/src/app/target/release/mirria /usr/local/bin/
+WORKDIR /usr/local/bin
+CMD ["mirria"]
