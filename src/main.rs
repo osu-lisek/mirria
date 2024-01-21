@@ -209,7 +209,7 @@ async fn main() {
 
     ensure_filters(meiliclient.clone(), "beatmapset", &["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await;
     ensure_filters(meiliclient.clone(), "downloads", &["id"]).await;
-    ensure_sort(meiliclient.clone(), "beatmapset", &["id", "title", "title_unicode", "last_updated", "ranked_date", "submitted_date"]).await;
+    ensure_sort(meiliclient.clone(), "beatmapset", &["id", "title", "title_unicode", "last_updated", "ranked_date", "submitted_date", "play_count"]).await;
     
 
 
