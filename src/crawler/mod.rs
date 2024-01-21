@@ -15,27 +15,12 @@ pub struct Context {
     pub osu: Arc<OsuClient>,
 }
 
-// async fn create_index_if_not_exists(context: &Context, index: &str) {
-//     let exists = context.elasticsearch.indices().exists(IndicesExistsParts::Index(&[index])).send().await;
-//     if exists.is_err() {
-//         let _ = context.elasticsearch.indices().create(IndicesCreateParts::Index(index)).send().await;
-//     }
-// }
 
 async fn crawl_search(context: &Context) {
-    // create_index_if_not_exists(context, "beatmapsets").await;
-    // create_index_if_not_exists(context, "beatmaps").await;
 
     let cursor = Mutex::new(String::new());
     *cursor.lock().await = context.config.cursor.clone();
     let mut last_save = Instant::now();
-    //making paralel loop to update it in config
-    // tokio::spawn(async move {
-    //     loop {
-    //         let mut config: Configuration = confy::load("mirria", None).unwrap();
-    //         config.cursors.graveyard = cursor.lock().await.clone().to_string();
-    //     }
-    // });
 
     loop {
         let mut cursor = cursor.lock().await;
@@ -78,7 +63,7 @@ async fn crawl_search(context: &Context) {
             break;
         }
 
-        let _ = time::sleep(Duration::from_secs(10)).await;
+        let _ = time::sleep(Duration::from_secs(3)).await;
     }
 }
 
