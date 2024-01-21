@@ -127,7 +127,7 @@ async fn main() {
     let context = Context {
         config: Arc::new(configuration.clone()),
         meili_client: Arc::new(meiliclient),
-        osu: osu_client.unwrap()
+        osu: Arc::new(osu_client.unwrap())
     };
 
     let configuration_env: Config = Config::parse();

@@ -12,7 +12,7 @@ use crate::{
 pub struct Context {
     pub config: Arc<Configuration>,
     pub meili_client: Arc<Client>,
-    pub osu: OsuClient,
+    pub osu: Arc<OsuClient>,
 }
 
 // async fn create_index_if_not_exists(context: &Context, index: &str) {
@@ -66,7 +66,6 @@ async fn crawl_search(context: &Context) {
             confy::store("mirria", None, config).unwrap();
             info!("Saving cursor to config");
         }
-        let _cursor_string = beatmaps.cursor_string.to_string();
 
         let crawled_beatmaps = beatmaps.beatmapsets;
         info!("Crawled {} beatmaps", crawled_beatmaps.len());

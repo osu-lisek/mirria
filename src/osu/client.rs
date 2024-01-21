@@ -11,7 +11,8 @@ use serde_derive::Deserialize;
 use tokio::fs::File;
 use tracing::{error, info};
 
-use crate::config::Configuration;
+
+use crate::{config::Configuration};
 
 use super::types::SearchResponse;
 
@@ -49,10 +50,12 @@ pub trait OsuApi {
         status: String,
         cursor_string: Option<String>,
     ) -> Option<SearchResponse>;
+
     async fn download_if_not_exists(
         &self,
-        id: String,
+        id: i64,
         path_to_beatmaps: String,
+        force: bool
     ) -> Result<Vec<u8>, Error>;
     async fn fetch_user(&self) -> Result<UserResponse, Error>;
 }
@@ -269,22 +272,21 @@ impl OsuApi for OsuClient {
         }
         // Some(serialization_response.unwrap())
     }
-
     async fn download_if_not_exists(
         &self,
-        id: String,
+        id: i64,
         path_to_beatmaps: String,
+        force: bool
     ) -> Result<Vec<u8>, Error> {
-        //Saving it to beatmaps folder
         let data_folder = Path::new(path_to_beatmaps.as_str());
-        // let path_to_save = join_paths([data_folder, Path::new(format!("{}.osz", id).as_str())]).unwrap();
         let path_to_save = data_folder.join(format!("{}.osz", id));
+
         let file = File::open(path_to_save.clone()).await;
-        if file.is_ok() {
-            return Ok(Vec::new());
-        } else {
-            info!("{:#?}", file.unwrap_err());
+
+        if file.is_ok() && !force {
+            return Ok(Vec::new())
         }
+   
         let client = reqwest::Client::new();
 
         let response = client
