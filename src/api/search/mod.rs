@@ -41,7 +41,7 @@ struct SearchQuery {
     pub query: Option<String>,
     pub limit: Option<i32>,
     pub offset: Option<i32>,
-    pub statues: Option<Vec<String>>,
+    pub statuses: Option<Vec<String>>,
     pub sort: Option<String>,
     pub modes: Option<Vec<OsuRuleset>>,
 }
@@ -61,7 +61,7 @@ async fn search(
     let parsed_query: SearchQuery = parsed_query.unwrap();
 
     let mapped_statuses = parsed_query
-        .statues
+        .statuses
         .unwrap_or(Vec::from(
             ["ranked", "loved", "aproved", "qualified"].map(|x| x.to_string()),
         ))
