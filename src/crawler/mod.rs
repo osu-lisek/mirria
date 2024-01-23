@@ -22,6 +22,7 @@ async fn crawl_search(context: &Context) {
     *cursor.lock().await = context.config.cursor.clone();
     let mut last_save = Instant::now();
 
+    let mut is_end_reached = false;
     loop {
         let mut cursor = cursor.lock().await;
         info!("Crawling beatmaps with cursor {}", cursor);
@@ -42,7 +43,12 @@ async fn crawl_search(context: &Context) {
         }
 
         let beatmaps = beatmaps.unwrap();
-        *cursor = beatmaps.cursor_string.to_string();
+
+        
+        if let Some(search_cursor) = beatmaps.cursor_string {
+            *cursor = search_cursor;
+            is_end_reached = true;
+        }
 
         if Instant::now().duration_since(last_save) > Duration::from_secs(30) {
             last_save = Instant::now();
@@ -61,6 +67,13 @@ async fn crawl_search(context: &Context) {
         if result.is_err() {
             error!("{}", result.err().unwrap());
             break;
+        }
+
+        if is_end_reached {
+            info!("End of search reached, waiting 60 seconds for new beatmaps");
+            let _ = time::sleep(Duration::from_secs(60)).await;
+            is_end_reached = false;
+            continue;
         }
 
         let _ = time::sleep(Duration::from_secs(3)).await;

@@ -11,9 +11,9 @@ pub struct SearchResponse {
     pub recommended_difficulty: f64,
     pub error: Option<Value>,
     pub total: i64,
-    pub cursor: Cursor,
+    pub cursor: Option<Cursor>,
     #[serde(rename = "cursor_string")]
-    pub cursor_string: String,
+    pub cursor_string: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
