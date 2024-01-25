@@ -16,7 +16,7 @@ pub struct Configuration {
     pub osu_password: String,
     pub osu_access_token: String,
     pub osu_refresh_token: String,
-    pub osu_token_expires_at: u64,
+    pub osu_token_expires_at: i64,
     pub cursor: String,
     pub meilisearch: Meili,
     pub beatmaps_folder: String

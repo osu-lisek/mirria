@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{borrow::BorrowMut, sync::Arc, time::{Duration, Instant}};
 
 use meilisearch_sdk::Client;
 use tokio::{sync::Mutex, time};
@@ -9,21 +9,22 @@ use crate::{
     osu::client::{OsuApi, OsuClient},
 };
 
+#[derive(Clone, Debug)]
 pub struct Context {
     pub config: Arc<Configuration>,
     pub meili_client: Arc<Client>,
-    pub osu: Arc<OsuClient>,
+    pub osu: OsuClient,
 }
 
 
-async fn crawl_search(context: &Context) {
-
+async fn crawl_search(context: Mutex<Context>) {
     let cursor = Mutex::new(String::new());
-    *cursor.lock().await = context.config.cursor.clone();
+    *cursor.lock().await = context.lock().await.config.cursor.clone();
     let mut last_save = Instant::now();
 
     let mut is_end_reached = false;
     loop {
+        let mut context = context.lock().await;
         let mut cursor = cursor.lock().await;
         info!("Crawling beatmaps with cursor {}", cursor);
 
@@ -69,9 +70,9 @@ async fn crawl_search(context: &Context) {
             break;
         }
 
-        if is_end_reached {
-            info!("End of search reached, waiting 60 seconds for new beatmaps");
-            let _ = time::sleep(Duration::from_secs(60)).await;
+        if is_end_reached || crawled_beatmaps.len() < 50 {
+            info!("End of search reached, waiting 3 minutes for new beatmaps");
+            let _ = time::sleep(Duration::from_secs(60*3)).await;
             is_end_reached = false;
             continue;
         }
@@ -81,10 +82,9 @@ async fn crawl_search(context: &Context) {
 }
 
 pub async fn serve(context: Context) {
-    let ctx_arc = Arc::new(context);
-    let crawler_ctx = ctx_arc.clone();
+    let crawler_ctx = Mutex::new(context.clone());
 
     let _ = tokio::try_join!(tokio::spawn(async move {
-        crawl_search(crawler_ctx.as_ref()).await
+        crawl_search(crawler_ctx).await
     }));
 }

@@ -3,16 +3,17 @@ use std::{
     fs::write,
     io::{Error, ErrorKind},
     path::Path,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 
+use chrono::{Local};
+use confy::ConfyError;
 use serde_derive::Deserialize;
 use tokio::fs::File;
 use tracing::{error, info};
 
 
-use crate::{config::Configuration};
+use crate::config::Configuration;
 
 use super::types::SearchResponse;
 
@@ -20,13 +21,13 @@ use super::types::SearchResponse;
 pub struct OsuClient {
     access_token: String,
     refresh_token: String,
-    token_expires_at: u64,
+    token_expires_at: i64,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
-    pub expires_in: u64,
+    pub expires_in: i64,
     pub refresh_token: String,
 }
 
@@ -44,20 +45,24 @@ pub trait OsuApi {
     ) -> Result<OsuClient, Error>;
     async fn refresh_token(&mut self, config: Configuration) -> Result<bool, Error>;
     async fn search_beatmapsets(
-        &self,
+        &mut self,
         nsfw: bool,
         sort: String,
         status: String,
-        cursor_string: Option<String>,
+        cursor_string: Option<String>
     ) -> Option<SearchResponse>;
 
     async fn download_if_not_exists(
-        &self,
+        &mut self,
         id: i64,
         path_to_beatmaps: String,
         force: bool
     ) -> Result<Vec<u8>, Error>;
     async fn fetch_user(&self) -> Result<UserResponse, Error>;
+
+    async fn refresh_token_if_required(&mut self) -> bool;
+
+    fn load_config(self) -> Result<Configuration, ConfyError>;
 }
 
 pub async fn log_in_using_credentials(
@@ -89,11 +94,7 @@ pub async fn log_in_using_credentials(
     let mut new_config = config.clone().borrow_mut().to_owned();
     new_config.osu_access_token = resp.access_token.clone();
     new_config.osu_refresh_token = resp.refresh_token.clone();
-    new_config.osu_token_expires_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + resp.expires_in;
+    new_config.osu_token_expires_at = Local::now().timestamp() + resp.expires_in;
 
     confy::store("mirria", None, new_config).expect("Error while saving config.");
 
@@ -132,40 +133,9 @@ impl OsuApi for OsuClient {
         access_token: String,
         refresh_token: String,
     ) -> Result<OsuClient, Error> {
-        if config.osu_token_expires_at
-            < SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-        {
-            let mut client = OsuClient {
-                access_token: access_token,
-                refresh_token: refresh_token,
-                token_expires_at: config.osu_token_expires_at,
-            };
-
-            let is_success = client.refresh_token(config.clone()).await;
-
-            if is_success.is_err() {
-                error!("Failed to refresh token");
-                return Err(Error::new(ErrorKind::Other, "Failed to refresh tokens"));
-            }
-
-            let user = client.fetch_user().await;
-
-            if user.is_err() {
-                return Err(Error::new(ErrorKind::Other, "Failed to fetch user"));
-            }
-
-            let user = user.unwrap();
-
-            info!("Logged in as {} (https://osu.ppy.sh/users/{})", user.username, user.id);
-
-            return Ok(client);
-        }
+        
 
         //Validating tokens
-
         let client = OsuClient {
             access_token: String::from(access_token),
             refresh_token: String::from(refresh_token),
@@ -213,34 +183,42 @@ impl OsuApi for OsuClient {
         let mut new_config = config.clone().borrow_mut().to_owned();
         new_config.osu_access_token = resp.access_token.clone();
         new_config.osu_refresh_token = resp.refresh_token.clone();
-        new_config.osu_token_expires_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + resp.expires_in;
+        new_config.osu_token_expires_at = Local::now().timestamp() + resp.expires_in;
 
         confy::store("mirria", None, new_config).expect("Error while saving config.");
 
         self.access_token = resp.access_token;
         self.refresh_token = resp.refresh_token;
-        self.token_expires_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + resp.expires_in;
+        self.token_expires_at = Local::now().timestamp() + resp.expires_in;
 
         info!("Token refreshed.");
 
         Ok(true)
     }
 
+    
+
     async fn search_beatmapsets(
-        &self,
+        &mut self,
         nsfw: bool,
         sort: String,
         status: String,
-        cursor_string: Option<String>,
+        cursor_string: Option<String>
     ) -> Option<SearchResponse> {
+        if self.clone().refresh_token_if_required().await {
+            let config = self.clone().load_config();
+            if let Err(error) = config {
+                error!("Error while reloading config: {}", error);
+                return None
+            }
+
+            let config = config.unwrap();
+
+            self.access_token = config.osu_access_token;
+            self.refresh_token = config.osu_refresh_token;
+            self.token_expires_at = config.osu_token_expires_at;
+        }
+        
         let client = reqwest::Client::new();
 
         let response = client
@@ -265,6 +243,7 @@ impl OsuApi for OsuClient {
         match result {
             Ok(v) => return Some(v),
             Err(err) => {
+                info!("{}", text);
                 let path = err.path().to_string();
                 error!("Failed to parse json, here path: {}", path);
                 return None;
@@ -273,11 +252,24 @@ impl OsuApi for OsuClient {
         // Some(serialization_response.unwrap())
     }
     async fn download_if_not_exists(
-        &self,
+        &mut self,
         id: i64,
         path_to_beatmaps: String,
         force: bool
     ) -> Result<Vec<u8>, Error> {
+        if self.refresh_token_if_required().await {
+            let config = self.clone().load_config();
+            if let Err(error) = config {
+                error!("Error while reloading config: {}", error);
+                return Err(Error::new(ErrorKind::Other, "Failed to refresh token"));
+            }
+
+            let config = config.unwrap();
+
+            self.access_token = config.osu_access_token;
+            self.refresh_token = config.osu_refresh_token;
+            self.token_expires_at = config.osu_token_expires_at;
+        }
         let data_folder = Path::new(path_to_beatmaps.as_str());
         let path_to_save = data_folder.join(format!("{}.osz", id));
 
@@ -318,5 +310,30 @@ impl OsuApi for OsuClient {
             error!("Failed to save beatmap: {:#?}", result.unwrap_err());
         }
         Ok(bytes.to_vec())
+    }
+
+    async fn refresh_token_if_required(&mut self) -> bool {
+        let config = self.clone().load_config().expect("Failed to load config");
+        let date_time = Local::now().timestamp();
+        if date_time > config.osu_token_expires_at {
+            match self.refresh_token(config).await {
+                Ok(success) => {
+                    info!("Refreshed token. {}", success);
+                    return success;
+                },
+                Err(err) => {
+                    error!("Failed to refresh token: {}", err);
+                    return false;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn load_config(self) -> Result<Configuration, ConfyError> {
+        let configuration: Result<Configuration, ConfyError> = confy::load("mirria", None);
+
+        configuration
     }
 }
