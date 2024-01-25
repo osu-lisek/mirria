@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, sync::Arc, time::{Duration, Instant}};
+use std::{sync::Arc, time::{Duration, Instant}};
 
 use meilisearch_sdk::Client;
 use tokio::{sync::Mutex, time};
