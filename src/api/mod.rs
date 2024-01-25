@@ -5,21 +5,26 @@ pub mod search;
 
 use std::sync::Arc;
 
-use axum::{Extension, Router};
+use axum::{routing::get, Extension, Router};
+use axum_prometheus::{metrics_exporter_prometheus::PrometheusBuilder, PrometheusMetricLayer, PrometheusMetricLayerBuilder};
 use tokio::sync::Mutex;
 use tower::ServiceBuilder;
-use tower_http::trace::{DefaultOnRequest, TraceLayer, DefaultOnResponse};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use crate::crawler::Context;
 
+
 pub async fn serve(ctx: Context) {
     let ctx = Arc::new(Mutex::new(ctx.clone()));
+    let prometeus_layer = PrometheusMetricLayerBuilder::new().with_prefix("mirria").build();
+    let metric_handle = PrometheusBuilder::new()
+    .install_recorder()
+    .unwrap();
 
     let layer_ctx = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http()
-        .on_request(DefaultOnRequest::new().level(Level::INFO))
-        .on_response(DefaultOnResponse::new().level(Level::INFO).latency_unit(tower_http::LatencyUnit::Millis)))
+        .make_span_with(DefaultMakeSpan::new().level(Level::INFO).include_headers(true)))
         .layer(Extension(ctx));
 
     let router = Router::new()
@@ -27,7 +32,9 @@ pub async fn serve(ctx: Context) {
         .merge(crate::api::beatmaps::serve())
         .merge(crate::api::downloads::serve())
         .merge(crate::api::search::serve())
-        .layer(layer_ctx);
+        .route("/metrics", get(|| async move { metric_handle.render() }))
+        .layer(layer_ctx)
+        .layer(prometeus_layer);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, router).await.unwrap();
 }
