@@ -3,12 +3,12 @@ use std::{sync::Arc, path::Path as path_sys};
 use axum::{extract::Path, Extension, Router, routing::get, response::Response, body::Body};
 use chrono::{DateTime, Local};
 use serde_json::json;
-use tokio::io::AsyncReadExt;
+use tokio::{io::AsyncReadExt, sync::Mutex};
 use tracing::{error, info};
 
 use crate::{crawler::Context, osu::client::OsuApi, ops::{beatmapset::get_beatmapset_by_id, DownloadIndex}};
 
-async fn create_new_index(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex> {
+async fn create_new_index(ctx: Context, id: i64) -> Option<DownloadIndex> {
     let download_index = Some(DownloadIndex { id: id, date: Local::now().timestamp()});
     if let Err(err) = ctx.meili_client.index("downloads").add_documents(&[download_index.clone().unwrap()], Some("id")).await {
         error!("Failed to create index: {}", err);
@@ -19,7 +19,7 @@ async fn create_new_index(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex> {
     download_index
 }
 
-async fn get_index_or_create(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex> {
+async fn get_index_or_create(ctx: Context, id: i64) -> Option<DownloadIndex> {
     let index_response = ctx.meili_client
     .index("downloads")
     .search()
@@ -31,7 +31,7 @@ async fn get_index_or_create(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex
 
     if let Err(err) = index_response {
         //Index not found, creating inserting index
-        let download_index = create_new_index(ctx.clone(), id).await;
+        let download_index = create_new_index(ctx, id).await;
         error!("Failed to get index: {}, created new one: {:#?}", err, download_index);
 
         return download_index
@@ -55,18 +55,20 @@ async fn get_index_or_create(ctx: Arc<Context>, id: i64) -> Option<DownloadIndex
 }
 
 async fn download(
-    Extension(ctx): Extension<Arc<Context>>,
+    Extension(ctx): Extension<Arc<Mutex<Context>>>,
     Path(id): Path<i64>
 ) -> Response {
 
+    let mut ctx = ctx.lock().await;
+    let config = ctx.config.clone();
     let mut redownload_required = false;
 
-    let index = get_index_or_create(ctx.clone(), id).await;
+    let index = get_index_or_create(ctx.to_owned(), id).await;
     if index.is_none() {
         Response::builder().status(500).body(Body::from(json!({"ok": false, "message": "Internal database exception"}).to_string())).unwrap();
     }
    
-    let beatmapset = get_beatmapset_by_id(ctx.clone(), id).await;
+    let beatmapset = get_beatmapset_by_id(ctx.to_owned(), id).await;
 
     match beatmapset {
         Ok(set) => {
@@ -88,7 +90,7 @@ async fn download(
         _ => {}
     }
 
-    if ctx.osu.download_if_not_exists(id.clone(), ctx.config.clone().beatmaps_folder.clone(), redownload_required).await.is_err() {
+    if ctx.osu.download_if_not_exists(id.clone(), config.beatmaps_folder.clone(), redownload_required).await.is_err() {
         return Response::builder().body(Body::from(json!({"ok": false, "message": "Failed to download file"}).to_string())).unwrap();
     }
 
@@ -105,7 +107,7 @@ async fn download(
     file.read_to_end(&mut content).await.unwrap();
     
     let mut file_name = format!("{}.osz", id);    
-    let beatmapset = get_beatmapset_by_id(ctx, id).await;
+    let beatmapset = get_beatmapset_by_id(ctx.to_owned(), id).await;
     
     if let Ok(beatmapset) = beatmapset {
         file_name = format!("{} {} - {}.osz", beatmapset.id, beatmapset.artist, beatmapset.title);

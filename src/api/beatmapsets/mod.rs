@@ -4,15 +4,17 @@ use axum::{
     Extension, Json, Router, extract::Path, http::StatusCode,
     routing::get, response::Result
 };
+use tokio::sync::Mutex;
 
 
 use crate::{crawler::Context, osu::types::Beatmapset, ops::{beatmapset::get_beatmapset_by_id as fetch_beatmapset_by_id, beatmapset::get_beatmapset_by_beatmap_id as fetch_beatmapset_by_beatmap_id, beatmaps::DatabaseError}};
 
 async fn get_beatmapset_by_id(
-    Extension(ctx): Extension<Arc<Context>>,
+    Extension(ctx): Extension<Arc<Mutex<Context>>>,
     Path(id): Path<String>,
 ) -> Result<Json<Beatmapset>, StatusCode> {
-    let response = fetch_beatmapset_by_id(ctx, id.parse::<i64>().unwrap_or(0)).await;
+    let ctx = ctx.lock().await;
+    let response = fetch_beatmapset_by_id(ctx.to_owned(), id.parse::<i64>().unwrap_or(0)).await;
 
     if response.is_err() {
         let error = response.unwrap_err();
