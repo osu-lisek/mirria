@@ -9,6 +9,7 @@ use axum::{
 };
 use serde_derive::{Deserialize, Serialize};
 
+use tokio::sync::Mutex;
 use tracing::error;
 
 use crate::{crawler::Context, osu::types::Beatmapset};
@@ -47,10 +48,11 @@ struct SearchQuery {
 }
 
 async fn search(
-    Extension(ctx): Extension<Arc<Context>>,
+    Extension(ctx): Extension<Arc<Mutex<Context>>>,
     Query(_query): Query<SearchQuery>,
     request: Request,
 ) -> Result<Json<Vec<Beatmapset>>, StatusCode> {
+    let ctx = ctx.lock().await;
     let parsed_query =
         serde_qs::from_str(request.uri().query().unwrap_or(""));
 

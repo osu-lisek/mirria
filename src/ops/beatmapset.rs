@@ -7,7 +7,7 @@ use crate::{crawler::Context, osu::types::Beatmapset};
 use super::beatmaps::DatabaseError;
 
 
-pub async fn get_beatmapset_by_hash(ctx: Arc<Context>, checksum: impl ToString) -> Result<Beatmapset, DatabaseError> {
+pub async fn get_beatmapset_by_hash(ctx: Context, checksum: impl ToString) -> Result<Beatmapset, DatabaseError> {
     let response = ctx
         .meili_client
         .index("beatmapset")
@@ -57,7 +57,7 @@ pub async fn get_beatmapset_by_id(ctx: Context, id: i64) -> Result<Beatmapset, D
 }
 
 
-pub async fn get_beatmapset_by_beatmap_id(ctx: Arc<Context>, id: i64) -> Result<Beatmapset, DatabaseError> {
+pub async fn get_beatmapset_by_beatmap_id(ctx: Context, id: i64) -> Result<Beatmapset, DatabaseError> {
     let response = ctx
         .meili_client
         .index("beatmapset")

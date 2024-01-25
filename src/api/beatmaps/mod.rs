@@ -1,8 +1,10 @@
+
 use std::sync::Arc;
 
 use axum::{
     extract::Path, http::StatusCode, response::Result, routing::get, Extension, Json, Router,
 };
+use tokio::sync::Mutex;
 
 use crate::{
     crawler::Context,
@@ -11,10 +13,11 @@ use crate::{
 };
 
 async fn get_beatmap_by_id(
-    Extension(ctx): Extension<Arc<Context>>,
+    Extension(ctx): Extension<Arc<Mutex<Context>>>,
     Path(id): Path<String>,
 ) -> Result<Json<Beatmap>, StatusCode> {
-    let response = get_beatmap_from_db(ctx, id.parse::<i64>().unwrap_or(0)).await;
+    let ctx = ctx.lock().await;
+    let response = get_beatmap_from_db(ctx.to_owned(), id.parse::<i64>().unwrap_or(0)).await;
 
     if response.is_err() {
         let error = response.unwrap_err();
@@ -31,10 +34,11 @@ async fn get_beatmap_by_id(
 }
 
 async fn get_beatmap_by_hash(
-    Extension(ctx): Extension<Arc<Context>>,
+    Extension(ctx): Extension<Arc<Mutex<Context>>>,
     Path(checksum): Path<String>,
 ) -> Result<Json<Beatmapset>, StatusCode> {
-    let response = get_beatmapset_by_hash(ctx, checksum).await;
+    let ctx = ctx.lock().await;
+    let response = get_beatmapset_by_hash(ctx.to_owned(), checksum).await;
 
     if response.is_err() {
         let error = response.unwrap_err();

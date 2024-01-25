@@ -24,7 +24,7 @@ impl fmt::Display for DatabaseError {
     }
 }
 
-pub async fn get_beatmap_by_id(ctx: Arc<Context>, id: i64) -> Result<Beatmap, DatabaseError> {
+pub async fn get_beatmap_by_id(ctx: Context, id: i64) -> Result<Beatmap, DatabaseError> {
     let response = ctx
         .meili_client
         .index("beatmapset")
