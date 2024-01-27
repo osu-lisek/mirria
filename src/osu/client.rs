@@ -314,6 +314,10 @@ impl OsuApi for OsuClient {
 
     async fn refresh_token_if_required(&mut self) -> bool {
         let config = self.clone().load_config().expect("Failed to load config");
+
+        if config.osu_access_token != self.access_token {
+            return true;
+        }
         let date_time = Local::now().timestamp();
         if date_time > config.osu_token_expires_at {
             match self.refresh_token(config).await {
