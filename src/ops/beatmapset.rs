@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use tracing::error;
 
 use crate::{crawler::Context, osu::types::Beatmapset};

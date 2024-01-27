@@ -6,10 +6,10 @@ pub mod search;
 use std::sync::Arc;
 
 use axum::{routing::get, Extension, Router};
-use axum_prometheus::{metrics_exporter_prometheus::PrometheusBuilder, PrometheusMetricLayer, PrometheusMetricLayerBuilder};
+use axum_prometheus::{metrics_exporter_prometheus::PrometheusBuilder, PrometheusMetricLayerBuilder};
 use tokio::sync::Mutex;
 use tower::ServiceBuilder;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::Level;
 
 use crate::crawler::Context;
