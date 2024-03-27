@@ -6,4 +6,4 @@ services:
       context: .
     volumes:
       - ./config:/root/.config/mirria
-      - ./data:/root/data
+      - ./srv/data/mirror/beatmaps:/root/data

@@ -30,7 +30,7 @@ services:
     environment:
       - MEILI_MASTER_KEY=phUgbRnzVrhRoucIrSwxqfYbfPG4dP879t9E7n5U2
     volumes:
-       - /mnt/mirror/meili/:/meili_data:rw
+       - /var/data/mirror/db/:/meili_data:rw
     networks:
       - mirror
     healthcheck:
