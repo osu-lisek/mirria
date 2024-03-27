@@ -1,9 +1,7 @@
 
 services:
   mirria:
-    build:
-      dockerfile: Dockerfile
-      context: .
+    image: registry.lisek.cc/dhcpcd/mirria:latest
     volumes:
       - ./config:/root/.config/mirria
       - ./srv/data/mirror/beatmaps:/root/data
