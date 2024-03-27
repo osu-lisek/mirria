@@ -27,6 +27,8 @@ services:
         condition: service_healthy
   meilisearch:
     image: getmeili/meilisearch:v1.6
+    ports:
+      - 7700:7700
     environment:
       - MEILI_MASTER_KEY=phUgbRnzVrhRoucIrSwxqfYbfPG4dP879t9E7n5U2
     volumes:
