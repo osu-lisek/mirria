@@ -45,11 +45,6 @@ async fn crawl_search(context: Mutex<Context>) {
 
         let beatmaps = beatmaps.unwrap();
 
-        
-        if let Some(search_cursor) = beatmaps.cursor_string {
-            *cursor = search_cursor;
-            is_end_reached = true;
-        }
 
         if Instant::now().duration_since(last_save) > Duration::from_secs(30) {
             last_save = Instant::now();
@@ -70,10 +65,9 @@ async fn crawl_search(context: Mutex<Context>) {
             break;
         }
 
-        if is_end_reached || crawled_beatmaps.len() < 50 {
+        if crawled_beatmaps.len() < 50 {
             info!("End of search reached, waiting 3 minutes for new beatmaps");
             let _ = time::sleep(Duration::from_secs(60*3)).await;
-            is_end_reached = false;
             continue;
         }
 
