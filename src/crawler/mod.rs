@@ -71,6 +71,10 @@ async fn crawl_search(context: Mutex<Context>) {
             continue;
         }
 
+        if let Some(beatmap_cursor) = beatmaps.cursor_string {
+            *cursor = beatmap_cursor;
+        }
+
         let _ = time::sleep(Duration::from_secs(3)).await;
     }
 }
