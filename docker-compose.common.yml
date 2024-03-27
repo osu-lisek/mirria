@@ -1,7 +1,7 @@
 
 services:
   mirria:
-    image: registry.lisek.cc/dhcpcd/mirria:latest
+    image: registry.lisek.cc/dhcpcd/mirria:master
     volumes:
       - ./config:/root/.config/mirria
       - ./srv/data/mirror/beatmaps:/root/data
