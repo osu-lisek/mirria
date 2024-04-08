@@ -54,7 +54,7 @@ async fn search(
 ) -> Result<Json<Vec<Beatmapset>>, StatusCode> {
     let ctx = ctx.lock().await;
     let parsed_query =
-        serde_qs::from_str(request.uri().query().unwrap_or(""));
+        serde_qs::from_str(urlencoding::decode(request.uri().query().unwrap_or("")).unwrap_or("".into()).to_string().as_str());
 
     if let Err(_err) = parsed_query {
         return Err(StatusCode::BAD_REQUEST);
