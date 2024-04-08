@@ -2,7 +2,7 @@ use std::{sync::Arc, time::{Duration, Instant}};
 
 use meilisearch_sdk::Client;
 use tokio::{sync::Mutex, time};
-use tracing::{info, error};
+use tracing::{error, info, warn};
 
 use crate::{
     config::Configuration,
@@ -13,7 +13,7 @@ use crate::{
 pub struct Context {
     pub config: Arc<Configuration>,
     pub meili_client: Arc<Client>,
-    pub osu: OsuClient,
+    pub osu: OsuClient
 }
 
 
@@ -22,7 +22,6 @@ async fn crawl_search(context: Mutex<Context>) {
     *cursor.lock().await = context.lock().await.config.cursor.clone();
     let mut last_save = Instant::now();
 
-    let mut is_end_reached = false;
     loop {
         let mut context = context.lock().await;
         let mut cursor = cursor.lock().await;
@@ -40,7 +39,9 @@ async fn crawl_search(context: Mutex<Context>) {
         //Setting new cursor
 
         if !beatmaps.is_some() {
-            break;
+            warn!("Failed to crawl maps, gonna retry in 1 minute.");
+            let _ = time::sleep(Duration::from_secs(60)).await;
+            continue;
         }
 
         let beatmaps = beatmaps.unwrap();
