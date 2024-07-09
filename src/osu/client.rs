@@ -243,7 +243,6 @@ impl OsuApi for OsuClient {
         match result {
             Ok(v) => return Some(v),
             Err(err) => {
-                info!("{}", text);
                 let path = err.path().to_string();
                 error!("Failed to parse json, here path: {}", path);
                 return None;
