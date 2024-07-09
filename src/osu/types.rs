@@ -61,7 +61,7 @@ pub struct Beatmapset {
     #[serde(rename = "legacy_thread_url")]
     pub legacy_thread_url: Option<String>,
     #[serde(rename = "nominations_summary")]
-    pub nominations_summary: NominationsSummary,
+    pub nominations_summary: Value,
     pub ranked: i64,
     #[serde(rename = "ranked_date")]
     pub ranked_date: Option<String>,
