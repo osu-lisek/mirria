@@ -8,7 +8,7 @@ services:
     environment:
       - APP_COMPONENT=api
     ports:
-      - 7788:3000
+      - 3000
     networks:
       - mirror
     depends_on:
