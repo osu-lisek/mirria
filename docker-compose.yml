@@ -2,9 +2,12 @@ version: '3'
 
 services:
   api:
-    extends:
-      file: docker-compose.common.yml
-      service: mirria
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./config:/root/.config/mirria/default-config.yml
+      - ./data/beatmaps:/root/data
     environment:
       - APP_COMPONENT=api
     ports:
@@ -15,9 +18,12 @@ services:
       meilisearch:
         condition: service_healthy
   crawler:
-    extends:
-      file: docker-compose.common.yml
-      service: mirria
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./config:/root/.config/mirria/default-config.yml
+      - ./data/beatmaps:/root/data
     environment:
       - APP_COMPONENT=crawler
     networks:
