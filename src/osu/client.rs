@@ -8,6 +8,7 @@ use std::{
 
 use chrono::{Local};
 use confy::ConfyError;
+use reqwest::StatusCode;
 use serde_derive::Deserialize;
 use tokio::fs::File;
 use tracing::{error, info};
@@ -89,6 +90,11 @@ pub async fn log_in_using_credentials(
         .send()
         .await
         .unwrap();
+
+    if response.status() != StatusCode::OK {
+
+        return Err(Error::new(ErrorKind::Other, format!("Error to create token, response: {}", response.text().await.unwrap())))
+    }
 
     let resp = response.json::<TokenResponse>().await.unwrap();
 
