@@ -123,5 +123,6 @@ async fn download(
 
 pub fn serve() -> Router {
     return Router::new()
-    .route("/api/v1/download/:id", get(download));
+    .route("/api/v1/download/:id", get(download))
+    .route("/d/:id", get(download));
 }
