@@ -110,7 +110,7 @@ async fn download(
     let beatmapset = get_beatmapset_by_id(ctx.to_owned(), id).await;
     
     if let Ok(beatmapset) = beatmapset {
-        file_name = format!("{} {} - {}.osz", beatmapset.id, beatmapset.artist, beatmapset.title);
+        file_name = format!("{} {} - {}.osz", beatmapset.mapset_id, beatmapset.artist, beatmapset.title);
     }
 
     Response::builder()

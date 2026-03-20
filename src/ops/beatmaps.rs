@@ -45,7 +45,7 @@ pub async fn get_beatmap_by_id(ctx: Context, id: i64) -> Result<Beatmap, Databas
 
     let beatmapset = &response.hits.first().unwrap().result;
 
-    let beatmap = beatmapset.beatmaps.iter().find(|x| x.id == id).unwrap();
+    let beatmap = beatmapset.beatmaps.iter().find(|x| x.map_id == id).unwrap();
 
     Ok(beatmap.clone())
 }

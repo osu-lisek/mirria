@@ -8,14 +8,14 @@ use std::{time::Instant, fs::copy, sync::Arc};
 
 use clap::Parser;
 use confy::ConfyError;
-use meilisearch_sdk::Client;
+use meilisearch_sdk::client::Client;
 use tracing::{info, error, level_filters::LevelFilter};
 use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::{config::{Configuration, CONFIG_VERSION, Config}, crawler::Context, osu::client::log_in_using_credentials};
 use crate::osu::client::{OsuClient, OsuApi};
 
-async fn ensure_filters(client: Client, index: impl ToString, filters: &[&str]) {
+async fn ensure_filters(client: &Client, index: impl ToString, filters: &[&str]) {
     let filter = client.get_index(index.to_string()).await;
 
     match filter {
@@ -58,7 +58,7 @@ async fn ensure_filters(client: Client, index: impl ToString, filters: &[&str]) 
 }
 
 
-async fn ensure_sort(client: Client, index: impl ToString, sort: &[&str]) {
+async fn ensure_sort(client: &Client, index: impl ToString, sort: &[&str]) {
     let filter = client.get_index(index.to_string()).await;
 
     match filter {
@@ -182,7 +182,7 @@ async fn main() {
     if !configuration.has_authorization() {
         info!("Creating token");
         let configuration: Configuration = configuration.clone();
-        let response = log_in_using_credentials(configuration.clone(), configuration.osu_username, configuration.osu_password).await;
+        let response = log_in_using_credentials(configuration.clone()).await;
         
         if response.is_err() {
             error!("Error while creating token");
@@ -191,7 +191,6 @@ async fn main() {
         }
         let response = response.unwrap();
         access_token = response.access_token;
-        refresh_token = response.refresh_token;
         info!("Token has been created");
     }
 
@@ -206,10 +205,17 @@ async fn main() {
     info!("Client has been initialized");
     let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));
 
+    if meiliclient.is_err() {
+        error!("Error while creating meilisearch client");
+        error!("{:#?}", osu_client.unwrap_err());
+        return;
+    }
 
-    ensure_filters(meiliclient.clone(), "beatmapset", &["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await;
-    ensure_filters(meiliclient.clone(), "downloads", &["id"]).await;
-    ensure_sort(meiliclient.clone(), "beatmapset", &["id", "title", "title_unicode", "last_updated", "ranked_date", "submitted_date", "play_count"]).await;
+    let meiliclient = meiliclient.unwrap();
+
+    ensure_filters(&meiliclient, "beatmapset", &["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await;
+    ensure_filters(&meiliclient, "downloads", &["id"]).await;
+    ensure_sort(&meiliclient, "beatmapset", &["id", "title", "title_unicode", "last_updated", "ranked_date", "submitted_date", "play_count"]).await;
     
 
 
