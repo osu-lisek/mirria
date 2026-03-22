@@ -29,7 +29,8 @@ pub struct OsuClient {
 pub struct TokenResponse {
     pub access_token: String,
     pub expires_in: i64,
-    pub token_type: String
+    pub token_type: String,
+    pub refresh_token: String
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,10 +72,12 @@ pub async fn log_in_using_credentials(
 ) -> Result<TokenResponse, Error> {
     let client = reqwest::Client::new();
     let params = [
-        ("grant_type", "client_credentials"),
-        ("client_id", &config.osu_username),
-        ("client_secret", &config.osu_password),
-        ("scope", "public"),
+        ("grant_type", "password"),
+        ("client_id", "5"),
+        ("client_secret", "FGc9GAtyHzeQDshWP5Ah7dega8hJACAJpQtw6OXk"),
+        ("username", &config.osu_username),
+        ("password", &config.osu_password), 
+        ("scope", "*"),
     ];
 
     let response = client
@@ -94,6 +97,7 @@ pub async fn log_in_using_credentials(
 
     let mut new_config = config.clone().borrow_mut().to_owned();
     new_config.osu_access_token = resp.access_token.clone();
+    new_config.osu_refresh_token = resp.refresh_token.clone();
     new_config.osu_token_expires_at = Local::now().timestamp() + resp.expires_in;
 
     confy::store("mirria", None, new_config).expect("Error while saving config.");
@@ -143,22 +147,56 @@ impl OsuApi for OsuClient {
         };
 
 
-        // let user = client.fetch_user().await;
+        let user = client.fetch_user().await;
 
-        // if user.is_err() {
-        //     return Err(Error::new(ErrorKind::Other, "Failed to fetch user"));
-        // }
+        if user.is_err() {
+            return Err(Error::new(ErrorKind::Other, "Failed to fetch user"));
+        }
 
-        // let user = user.unwrap();
+        let user = user.unwrap();
 
-        info!("Logged in!");
+        info!("Logged in as {}!", user.username);
 
         Ok(client)
     }
 
     async fn refresh_token(&mut self, config: Configuration) -> Result<bool, Error> {
+ let client = reqwest::Client::new();
 
-        log_in_using_credentials(config).await;
+        let form = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &config.osu_refresh_token),
+            ("client_id", "5"),
+            ("client_secret", "FGc9GAtyHzeQDshWP5Ah7dega8hJACAJpQtw6OXk"),
+            ("scope", "*"),
+        ];
+
+
+        let response = client
+            .post("https://osu.ppy.sh/oauth/token")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
+            .form(&form)
+            .send()
+            .await
+            .unwrap();
+
+        if !response.status().is_success() {
+            return Err(Error::new(ErrorKind::Other, "Failed to refresh token"));
+        }
+        let resp = response.json::<TokenResponse>().await.unwrap();
+
+        let mut new_config = config.clone().borrow_mut().to_owned();
+        new_config.osu_access_token = resp.access_token.clone();
+        new_config.osu_refresh_token = resp.refresh_token.clone();
+        new_config.osu_token_expires_at = Local::now().timestamp() + resp.expires_in;
+
+        confy::store("mirria", None, new_config).expect("Error while saving config.");
+
+        self.access_token = resp.access_token;
+        self.refresh_token = resp.refresh_token;
+        self.token_expires_at = Local::now().timestamp() + resp.expires_in;
+
         info!("Token refreshed.");
 
         Ok(true)
