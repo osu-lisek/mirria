@@ -1,22 +1,19 @@
 use std::{
     borrow::BorrowMut,
-    fs::write,
     io::{Error, ErrorKind},
-    path::Path,
 };
 
-
-use chrono::{Local};
+use chrono::Local;
 use confy::ConfyError;
 use reqwest::StatusCode;
 use serde_derive::Deserialize;
-use tokio::fs::File;
 use tracing::{error, info};
-
 
 use crate::config::Configuration;
 
 use super::types::SearchResponse;
+
+static DOWNLOAD_TOKEN_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Clone)]
 pub struct OsuClient {
@@ -30,7 +27,7 @@ pub struct TokenResponse {
     pub access_token: String,
     pub expires_in: i64,
     pub token_type: String,
-    pub refresh_token: String
+    pub refresh_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,15 +48,10 @@ pub trait OsuApi {
         nsfw: bool,
         sort: String,
         status: String,
-        cursor_string: Option<String>
+        cursor_string: Option<String>,
     ) -> Option<SearchResponse>;
 
-    async fn download_if_not_exists(
-        &mut self,
-        id: i64,
-        path_to_beatmaps: String,
-        force: bool
-    ) -> Result<Vec<u8>, Error>;
+    async fn begin_download(&mut self, id: i64) -> Result<reqwest::Response, Error>;
     async fn fetch_user(&self) -> Result<UserResponse, Error>;
 
     async fn refresh_token_if_required(&mut self) -> bool;
@@ -67,16 +59,14 @@ pub trait OsuApi {
     fn load_config(self) -> Result<Configuration, ConfyError>;
 }
 
-pub async fn log_in_using_credentials(
-    config: Configuration
-) -> Result<TokenResponse, Error> {
+pub async fn log_in_using_credentials(config: Configuration) -> Result<TokenResponse, Error> {
     let client = reqwest::Client::new();
     let params = [
         ("grant_type", "password"),
         ("client_id", "5"),
         ("client_secret", "FGc9GAtyHzeQDshWP5Ah7dega8hJACAJpQtw6OXk"),
         ("username", &config.osu_username),
-        ("password", &config.osu_password), 
+        ("password", &config.osu_password),
         ("scope", "*"),
     ];
 
@@ -89,8 +79,13 @@ pub async fn log_in_using_credentials(
         .unwrap();
 
     if response.status() != StatusCode::OK {
-
-        return Err(Error::new(ErrorKind::Other, format!("Error to create token, response: {}", response.text().await.unwrap())))
+        return Err(Error::new(
+            ErrorKind::Other,
+            format!(
+                "Error to create token, response: {}",
+                response.text().await.unwrap()
+            ),
+        ));
     }
 
     let resp = response.json::<TokenResponse>().await.unwrap();
@@ -117,7 +112,10 @@ impl OsuApi for OsuClient {
             .await;
 
         if let Err(_err) = response {
-            return Err(Error::new(ErrorKind::Other, "Error while fetching current user."))
+            return Err(Error::new(
+                ErrorKind::Other,
+                "Error while fetching current user.",
+            ));
         }
 
         let response = response.unwrap();
@@ -125,7 +123,10 @@ impl OsuApi for OsuClient {
         let user = response.json::<UserResponse>().await;
 
         if user.is_err() {
-            return Err(Error::new(ErrorKind::Other, "Looks like osu! servers down, or did html instead of json."))
+            return Err(Error::new(
+                ErrorKind::Other,
+                "Looks like osu! servers down, or did html instead of json.",
+            ));
         }
 
         let user = user.unwrap();
@@ -137,15 +138,12 @@ impl OsuApi for OsuClient {
         access_token: String,
         refresh_token: String,
     ) -> Result<OsuClient, Error> {
-        
-
         //Validating tokens
         let client = OsuClient {
             access_token: String::from(access_token),
             refresh_token: String::from(refresh_token),
             token_expires_at: config.osu_token_expires_at,
         };
-
 
         let user = client.fetch_user().await;
 
@@ -161,7 +159,7 @@ impl OsuApi for OsuClient {
     }
 
     async fn refresh_token(&mut self, config: Configuration) -> Result<bool, Error> {
- let client = reqwest::Client::new();
+        let client = reqwest::Client::new();
 
         let form = [
             ("grant_type", "refresh_token"),
@@ -171,7 +169,6 @@ impl OsuApi for OsuClient {
             ("scope", "*"),
         ];
 
-
         let response = client
             .post("https://osu.ppy.sh/oauth/token")
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -179,19 +176,23 @@ impl OsuApi for OsuClient {
             .form(&form)
             .send()
             .await
-            .unwrap();
+            .map_err(Error::other)?;
 
         if !response.status().is_success() {
-            return Err(Error::new(ErrorKind::Other, "Failed to refresh token"));
+            return Err(Error::other("Failed to refresh token"));
         }
-        let resp = response.json::<TokenResponse>().await.unwrap();
+        let resp = response
+            .json::<TokenResponse>()
+            .await
+            .map_err(Error::other)?;
 
         let mut new_config = config.clone().borrow_mut().to_owned();
         new_config.osu_access_token = resp.access_token.clone();
         new_config.osu_refresh_token = resp.refresh_token.clone();
         new_config.osu_token_expires_at = Local::now().timestamp() + resp.expires_in;
 
-        confy::store("mirria", None, new_config).expect("Error while saving config.");
+        confy::store("mirria", None, new_config)
+            .map_err(|error| Error::other(format!("Failed to save refreshed token: {error}")))?;
 
         self.access_token = resp.access_token;
         self.refresh_token = resp.refresh_token;
@@ -202,20 +203,18 @@ impl OsuApi for OsuClient {
         Ok(true)
     }
 
-    
-
     async fn search_beatmapsets(
         &mut self,
         nsfw: bool,
         sort: String,
         status: String,
-        cursor_string: Option<String>
+        cursor_string: Option<String>,
     ) -> Option<SearchResponse> {
         if self.clone().refresh_token_if_required().await {
             let config = self.clone().load_config();
             if let Err(error) = config {
                 error!("Error while reloading config: {}", error);
-                return None
+                return None;
             }
 
             let config = config.unwrap();
@@ -224,7 +223,7 @@ impl OsuApi for OsuClient {
             self.refresh_token = config.osu_refresh_token;
             self.token_expires_at = config.osu_token_expires_at;
         }
-        
+
         let client = reqwest::Client::new();
 
         let response = client
@@ -256,65 +255,39 @@ impl OsuApi for OsuClient {
         }
         // Some(serialization_response.unwrap())
     }
-    async fn download_if_not_exists(
-        &mut self,
-        id: i64,
-        path_to_beatmaps: String,
-        force: bool
-    ) -> Result<Vec<u8>, Error> {
-        if self.refresh_token_if_required().await {
-            let config = self.clone().load_config();
-            if let Err(error) = config {
-                error!("Error while reloading config: {}", error);
-                return Err(Error::new(ErrorKind::Other, "Failed to refresh token"));
+    async fn begin_download(&mut self, id: i64) -> Result<reqwest::Response, Error> {
+        {
+            let _refresh_guard = DOWNLOAD_TOKEN_REFRESH_LOCK.lock().await;
+            let config = self.clone().load_config().map_err(|error| {
+                error!("Error while loading configuration for map download: {error}");
+                Error::other("Failed to load download credentials")
+            })?;
+
+            if config.osu_access_token != self.access_token {
+                self.access_token.clone_from(&config.osu_access_token);
+                self.refresh_token.clone_from(&config.osu_refresh_token);
+                self.token_expires_at = config.osu_token_expires_at;
             }
 
-            let config = config.unwrap();
-
-            self.access_token = config.osu_access_token;
-            self.refresh_token = config.osu_refresh_token;
-            self.token_expires_at = config.osu_token_expires_at;
+            if Local::now().timestamp() >= self.token_expires_at {
+                let refreshed = self.refresh_token(config).await.map_err(|error| {
+                    error!("Failed to refresh token for map download: {error}");
+                    Error::other("Failed to refresh download credentials")
+                })?;
+                if !refreshed {
+                    return Err(Error::other("Failed to refresh download credentials"));
+                }
+            }
         }
-        let data_folder = Path::new(path_to_beatmaps.as_str());
-        let path_to_save = data_folder.join(format!("{}.osz", id));
 
-        let file = File::open(path_to_save.clone()).await;
-
-        if file.is_ok() && !force {
-            return Ok(Vec::new())
-        }
-   
-        let client = reqwest::Client::new();
-
-        let response = client
+        reqwest::Client::new()
             .get(format!(
-                "https://osu.ppy.sh/api/v2/beatmapsets/{}/download",
-                id
+                "https://osu.ppy.sh/api/v2/beatmapsets/{id}/download"
             ))
-            .bearer_auth(self.clone().access_token)
+            .bearer_auth(&self.access_token)
             .send()
             .await
-            .unwrap();
-
-        info!("got response");
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            error!("Invalid status: {}", status);
-            return Err(Error::new(
-                ErrorKind::Other,
-                "Error while downloading file.",
-            ));
-        }
-
-        let bytes = response.bytes().await.unwrap();
-        //Saving it to data folder
-
-        let result = write(path_to_save, bytes.clone());
-        if result.is_err() {
-            error!("Failed to save beatmap: {:#?}", result.unwrap_err());
-        }
-        Ok(bytes.to_vec())
+            .map_err(Error::other)
     }
 
     async fn refresh_token_if_required(&mut self) -> bool {
@@ -329,7 +302,7 @@ impl OsuApi for OsuClient {
                 Ok(success) => {
                     info!("Refreshed token. {}", success);
                     return success;
-                },
+                }
                 Err(err) => {
                     error!("Failed to refresh token: {}", err);
                     return false;
