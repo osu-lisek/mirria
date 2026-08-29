@@ -8,5 +8,7 @@ pub mod beatmapset;
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DownloadIndex {
     pub id: i64,
-    pub date: i64
+    pub date: i64,
+    #[serde(default)]
+    pub count: u64,
 }

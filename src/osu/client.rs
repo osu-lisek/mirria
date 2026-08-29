@@ -1,6 +1,7 @@
 use std::{
     borrow::BorrowMut,
     io::{Error, ErrorKind},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use chrono::Local;
@@ -13,7 +14,17 @@ use crate::config::Configuration;
 
 use super::types::SearchResponse;
 
-static DOWNLOAD_TOKEN_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static DOWNLOAD_TOKEN_REFRESHING: AtomicBool = AtomicBool::new(false);
+static DOWNLOAD_TOKEN_REFRESHED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+struct DownloadTokenRefreshGuard;
+
+impl Drop for DownloadTokenRefreshGuard {
+    fn drop(&mut self) {
+        DOWNLOAD_TOKEN_REFRESHING.store(false, Ordering::Release);
+        DOWNLOAD_TOKEN_REFRESHED.notify_waiters();
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct OsuClient {
@@ -51,7 +62,7 @@ pub trait OsuApi {
         cursor_string: Option<String>,
     ) -> Option<SearchResponse>;
 
-    async fn begin_download(&mut self, id: i64) -> Result<reqwest::Response, Error>;
+    async fn begin_download(&mut self, id: i64, video: bool) -> Result<reqwest::Response, Error>;
     async fn fetch_user(&self) -> Result<UserResponse, Error>;
 
     async fn refresh_token_if_required(&mut self) -> bool;
@@ -255,9 +266,8 @@ impl OsuApi for OsuClient {
         }
         // Some(serialization_response.unwrap())
     }
-    async fn begin_download(&mut self, id: i64) -> Result<reqwest::Response, Error> {
-        {
-            let _refresh_guard = DOWNLOAD_TOKEN_REFRESH_LOCK.lock().await;
+    async fn begin_download(&mut self, id: i64, video: bool) -> Result<reqwest::Response, Error> {
+        loop {
             let config = self.clone().load_config().map_err(|error| {
                 error!("Error while loading configuration for map download: {error}");
                 Error::other("Failed to load download credentials")
@@ -268,22 +278,32 @@ impl OsuApi for OsuClient {
                 self.refresh_token.clone_from(&config.osu_refresh_token);
                 self.token_expires_at = config.osu_token_expires_at;
             }
+            if Local::now().timestamp() < self.token_expires_at {
+                break;
+            }
 
-            if Local::now().timestamp() >= self.token_expires_at {
-                let refreshed = self.refresh_token(config).await.map_err(|error| {
+            let refreshed = DOWNLOAD_TOKEN_REFRESHED.notified();
+            if DOWNLOAD_TOKEN_REFRESHING
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let _refresh_guard = DownloadTokenRefreshGuard;
+                if !self.refresh_token(config).await.map_err(|error| {
                     error!("Failed to refresh token for map download: {error}");
                     Error::other("Failed to refresh download credentials")
-                })?;
-                if !refreshed {
+                })? {
                     return Err(Error::other("Failed to refresh download credentials"));
                 }
+                break;
+            }
+
+            if DOWNLOAD_TOKEN_REFRESHING.load(Ordering::Acquire) {
+                refreshed.await;
             }
         }
 
         reqwest::Client::new()
-            .get(format!(
-                "https://osu.ppy.sh/api/v2/beatmapsets/{id}/download"
-            ))
+            .get(beatmapset_download_url(id, video))
             .bearer_auth(&self.access_token)
             .send()
             .await
@@ -317,5 +337,31 @@ impl OsuApi for OsuClient {
         let configuration: Result<Configuration, ConfyError> = confy::load("mirria", None);
 
         configuration
+    }
+}
+
+pub(crate) fn beatmapset_download_url(id: i64, video: bool) -> String {
+    let base = format!("https://osu.ppy.sh/api/v2/beatmapsets/{id}/download");
+    if video {
+        base
+    } else {
+        format!("{base}?noVideo=1")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::beatmapset_download_url;
+
+    #[test]
+    fn download_url_omits_video_option_by_default_and_uses_official_no_video_flag() {
+        assert_eq!(
+            beatmapset_download_url(42, true),
+            "https://osu.ppy.sh/api/v2/beatmapsets/42/download"
+        );
+        assert_eq!(
+            beatmapset_download_url(42, false),
+            "https://osu.ppy.sh/api/v2/beatmapsets/42/download?noVideo=1"
+        );
     }
 }

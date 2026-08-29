@@ -15,89 +15,110 @@ use tracing_subscriber::util::SubscriberInitExt;
 use crate::{config::{Configuration, CONFIG_VERSION, Config}, crawler::Context, osu::client::log_in_using_credentials};
 use crate::osu::client::{OsuClient, OsuApi};
 
-async fn ensure_filters(client: &Client, index: impl ToString, filters: &[&str]) {
-    let filter = client.get_index(index.to_string()).await;
+async fn ensure_index(client: &Client, index: &str, primary_key: &str) -> bool {
+    if client.get_index(index).await.is_ok() {
+        return true;
+    }
 
-    match filter {
-        Ok(filter) => {
-            let mut filters_to_add = Vec::new();
-            let filter_names = filter.get_filterable_attributes().await.unwrap();
-            for &filter_name in filters {
-                if !filter_names.contains(&filter_name.to_string()) {
-                    filters_to_add.push(filter_name);
-                }
-            }
-
-            info!("Filterable atrributes of {}: {:#?}", index.to_string(), filter_names);
-
-            if !filters_to_add.is_empty() {
-                info!("Updating filters");
-                let update_filter_task = filter.set_filterable_attributes(filters).await;
-                match update_filter_task {
-                    Err(err) => {
-                        error!("Failed to run update task, {}", err)
-                    },
-                    Ok(task) => {
-                        info!("Task has been enqueued, id: {}. awaiting", task.task_uid);
-                        match task.wait_for_completion(&client, None, None).await {
-                            Err(err) => {
-                                error!("Failed to run update task, {}", err)
-                            },
-                            Ok(_) => {
-                                info!("Task has been completed");
-                            }
-                        }
-                    }
-                }
+    match client.create_index(index, Some(primary_key)).await {
+        Ok(task) => match task.wait_for_completion(client, None, None).await {
+            Ok(_) => true,
+            Err(error) => {
+                error!("Failed to create Meilisearch index {index}: {error}");
+                false
             }
         },
-        Err(_) => {
-            
+        Err(error) => {
+            error!("Failed to enqueue Meilisearch index {index}: {error}");
+            false
         }
-    };
+    }
 }
 
-
-async fn ensure_sort(client: &Client, index: impl ToString, sort: &[&str]) {
-    let filter = client.get_index(index.to_string()).await;
-
-    match filter {
-        Ok(filter) => {
-            let mut filters_to_add = Vec::new();
-            let filter_names = filter.get_sortable_attributes().await.unwrap();
-            for &filter_name in sort {
-                if !filter_names.contains(&filter_name.to_string()) {
-                    filters_to_add.push(filter_name);
-                }
-            }
-
-            info!("Sortable atrributes of {}: {:#?}", index.to_string(), filter_names);
-
-            if !filters_to_add.is_empty() {
-                info!("Updating sortable attributes");
-                let update_filter_task = filter.set_sortable_attributes(sort).await;
-                match update_filter_task {
-                    Err(err) => {
-                        error!("Failed to run update task, {}", err)
-                    },
-                    Ok(task) => {
-                        info!("Task has been enqueued, id: {}. awaiting", task.task_uid);
-                        match task.wait_for_completion(&client, None, None).await {
-                            Err(err) => {
-                                error!("Failed to run update task, {}", err)
-                            },
-                            Ok(_) => {
-                                info!("Task has been completed");
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        Err(_) => {
-            
+async fn ensure_filters(client: &Client, index: &str, required: &[&str]) -> bool {
+    let index_handle = match client.get_index(index).await {
+        Ok(index) => index,
+        Err(error) => {
+            error!("Failed to load Meilisearch index {index}: {error}");
+            return false;
         }
     };
+    let mut attributes = match index_handle.get_filterable_attributes().await {
+        Ok(attributes) => attributes,
+        Err(error) => {
+            error!("Failed to load filterable attributes for {index}: {error}");
+            return false;
+        }
+    };
+    let original_len = attributes.len();
+    for &attribute in required {
+        if !attributes.iter().any(|current| current == attribute) {
+            attributes.push(attribute.to_owned());
+        }
+    }
+    if attributes.len() == original_len {
+        return true;
+    }
+
+    match index_handle.set_filterable_attributes(&attributes).await {
+        Ok(task) => match task.wait_for_completion(client, None, None).await {
+            Ok(_) => {
+                info!("Filterable attributes for {index} are ready");
+                true
+            }
+            Err(error) => {
+                error!("Failed to apply filterable attributes for {index}: {error}");
+                false
+            }
+        },
+        Err(error) => {
+            error!("Failed to enqueue filterable attributes for {index}: {error}");
+            false
+        }
+    }
+}
+
+async fn ensure_sort(client: &Client, index: &str, required: &[&str]) -> bool {
+    let index_handle = match client.get_index(index).await {
+        Ok(index) => index,
+        Err(error) => {
+            error!("Failed to load Meilisearch index {index}: {error}");
+            return false;
+        }
+    };
+    let mut attributes = match index_handle.get_sortable_attributes().await {
+        Ok(attributes) => attributes,
+        Err(error) => {
+            error!("Failed to load sortable attributes for {index}: {error}");
+            return false;
+        }
+    };
+    let original_len = attributes.len();
+    for &attribute in required {
+        if !attributes.iter().any(|current| current == attribute) {
+            attributes.push(attribute.to_owned());
+        }
+    }
+    if attributes.len() == original_len {
+        return true;
+    }
+
+    match index_handle.set_sortable_attributes(&attributes).await {
+        Ok(task) => match task.wait_for_completion(client, None, None).await {
+            Ok(_) => {
+                info!("Sortable attributes for {index} are ready");
+                true
+            }
+            Err(error) => {
+                error!("Failed to apply sortable attributes for {index}: {error}");
+                false
+            }
+        },
+        Err(error) => {
+            error!("Failed to enqueue sortable attributes for {index}: {error}");
+            false
+        }
+    }
 }
 
 
@@ -207,15 +228,51 @@ async fn main() {
 
     if meiliclient.is_err() {
         error!("Error while creating meilisearch client");
-        error!("{:#?}", osu_client.unwrap_err());
+        error!("{:#?}", meiliclient.unwrap_err());
         return;
     }
 
     let meiliclient = meiliclient.unwrap();
 
-    ensure_filters(&meiliclient, "beatmapset", &["beatmaps.id", "id", "title", "title_unicode", "beatmaps.checksum", "beatmaps.mode", "status"]).await;
-    ensure_filters(&meiliclient, "downloads", &["id"]).await;
-    ensure_sort(&meiliclient, "beatmapset", &["id", "title", "title_unicode", "last_updated", "ranked_date", "submitted_date", "play_count"]).await;
+    if !ensure_index(&meiliclient, "beatmapset", "id").await
+        || !ensure_index(&meiliclient, "downloads", "id").await
+    {
+        return;
+    }
+    if !ensure_filters(
+        &meiliclient,
+        "beatmapset",
+        &[
+            "beatmaps.id",
+            "id",
+            "title",
+            "title_unicode",
+            "beatmaps.checksum",
+            "beatmaps.mode",
+            "status",
+        ],
+    )
+    .await
+        || !ensure_filters(&meiliclient, "downloads", &["id"]).await
+        || !ensure_sort(
+            &meiliclient,
+            "beatmapset",
+            &[
+                "id",
+                "title",
+                "title_unicode",
+                "last_updated",
+                "ranked_date",
+                "submitted_date",
+                "play_count",
+            ],
+        )
+        .await
+        || !ensure_sort(&meiliclient, "downloads", &["count", "date", "id"]).await
+    {
+        error!("Required Meilisearch settings could not be applied");
+        return;
+    }
     
 
 

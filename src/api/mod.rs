@@ -10,14 +10,32 @@ use axum::{routing::get, Extension, Router};
 use axum_prometheus::{
     metrics_exporter_prometheus::PrometheusBuilder, PrometheusMetricLayerBuilder,
 };
+use sysinfo::System;
 use tokio::sync::Mutex;
 use tower::ServiceBuilder;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::Level;
+use tracing::{error, warn, Level};
 
-use crate::crawler::Context;
+use crate::{config::parse_cache_size, crawler::Context};
 
 pub async fn serve(ctx: Context) {
+    let mut system = System::new();
+    system.refresh_memory();
+    let cache_capacity = match parse_cache_size(&ctx.config.cache_size, system.total_memory()) {
+        Ok(capacity) => capacity,
+        Err(error) => {
+            error!(
+                "Invalid cache_size {:?}; API startup aborted: {error}",
+                ctx.config.cache_size
+            );
+            return;
+        }
+    };
+    let smart_cache = downloads::SmartCache::new(cache_capacity, Arc::clone(&ctx.meili_client));
+    if let Err(error) = smart_cache.refresh_once().await {
+        warn!("Initial smart-cache policy refresh failed; starting with an empty policy: {error}");
+    }
+
     let ctx = Arc::new(Mutex::new(ctx.clone()));
     let prometeus_layer = PrometheusMetricLayerBuilder::new()
         .with_prefix("mirria")
@@ -32,7 +50,7 @@ pub async fn serve(ctx: Context) {
                     .include_headers(true),
             ),
         )
-        .layer(Extension(downloads::state()))
+        .layer(Extension(downloads::state(Arc::clone(&smart_cache))))
         .layer(Extension(ctx));
 
     let router = Router::new()
@@ -45,10 +63,13 @@ pub async fn serve(ctx: Context) {
         .layer(layer_ctx)
         .layer(prometeus_layer);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(
+    let refresh_task = tokio::spawn(smart_cache.refresh_loop());
+    let server_result = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await
-    .unwrap();
+    .await;
+    refresh_task.abort();
+    let _ = refresh_task.await;
+    server_result.unwrap();
 }
