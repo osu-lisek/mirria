@@ -14,7 +14,7 @@ use sysinfo::System;
 use tokio::sync::Mutex;
 use tower::ServiceBuilder;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, warn, Level};
+use tracing::{error, info, Level};
 
 use crate::{config::parse_cache_size, crawler::Context};
 
@@ -32,9 +32,11 @@ pub async fn serve(ctx: Context) {
         }
     };
     let smart_cache = downloads::SmartCache::new(cache_capacity, Arc::clone(&ctx.meili_client));
-    if let Err(error) = smart_cache.refresh_once().await {
-        warn!("Initial smart-cache policy refresh failed; starting with an empty policy: {error}");
-    }
+    info!(
+        "Smart cache initialized with {} bytes of RAM capacity ({})",
+        cache_capacity, ctx.config.cache_size
+    );
+    let refresh_task = tokio::spawn(Arc::clone(&smart_cache).refresh_loop());
 
     let ctx = Arc::new(Mutex::new(ctx.clone()));
     let prometeus_layer = PrometheusMetricLayerBuilder::new()
@@ -63,7 +65,6 @@ pub async fn serve(ctx: Context) {
         .layer(layer_ctx)
         .layer(prometeus_layer);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    let refresh_task = tokio::spawn(smart_cache.refresh_loop());
     let server_result = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),

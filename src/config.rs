@@ -1,4 +1,4 @@
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 
 const DEFAULT_CACHE_SIZE: &str = "10%";
 
@@ -54,9 +54,8 @@ pub const CONFIG_VERSION: i32 = 3;
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Meili {
     pub url: String,
-    pub key: String
+    pub key: String,
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Configuration {
@@ -73,8 +72,7 @@ pub struct Configuration {
     pub cache_size: String,
 }
 
-
-impl ::std::default::Default for Configuration  {
+impl ::std::default::Default for Configuration {
     fn default() -> Self {
         Self {
             version: CONFIG_VERSION,

@@ -12,12 +12,11 @@ use meilisearch_sdk::{
     errors::{Error as MeiliError, ErrorCode},
 };
 use parking_lot::Mutex;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
-use crate::{ops::DownloadIndex, osu::types::Beatmapset};
+use crate::ops::DownloadIndex;
 
-const LATEST_RANKED_LIMIT: usize = 50;
-const POPULAR_DOWNLOAD_LIMIT: usize = 30;
+const DOWNLOAD_STAT_SEED_LIMIT: usize = 1_000;
 const POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -51,9 +50,7 @@ struct SmartCacheInner {
     reserved_bytes: usize,
     reservations: HashSet<CacheKey>,
     access_clock: u64,
-    latest_ranked: Vec<i64>,
     downloads: HashMap<i64, DownloadStat>,
-    popular_downloads: Vec<i64>,
     persist_queue: VecDeque<i64>,
     persist_queued: HashSet<i64>,
     persist_worker_running: bool,
@@ -100,32 +97,73 @@ impl SmartCache {
         key: CacheKey,
         size: u64,
     ) -> Option<FillReservation> {
-        let size = usize::try_from(size).ok()?;
-        if size == 0 || size > self.capacity {
+        let Ok(size) = usize::try_from(size) else {
+            warn!(
+                "Skipping RAM cache fill for map {} (video={}): {size} bytes exceeds platform limits",
+                key.id, key.video
+            );
+            return None;
+        };
+        if size == 0 {
+            warn!(
+                "Skipping RAM cache fill for map {} (video={}): archive is empty",
+                key.id, key.video
+            );
+            return None;
+        }
+        if size > self.capacity {
+            info!(
+                "Skipping RAM cache fill for map {} (video={}): {size} bytes exceeds {}-byte capacity",
+                key.id, key.video, self.capacity
+            );
             return None;
         }
 
         let mut inner = self.inner.lock();
-        if !is_eligible(&inner, key.id)
-            || inner.entries.contains_key(&key)
-            || inner.reservations.contains(&key)
-        {
+        if inner.entries.contains_key(&key) {
+            info!(
+                "Skipping RAM cache fill for map {} (video={}): already cached",
+                key.id, key.video
+            );
+            return None;
+        }
+        if inner.reservations.contains(&key) {
+            info!(
+                "Skipping RAM cache fill for map {} (video={}): fill already in progress",
+                key.id, key.video
+            );
             return None;
         }
 
-        let accounted = inner
+        let Some(accounted) = inner
             .used_bytes
-            .checked_add(inner.reserved_bytes)?
-            .checked_add(size)?;
+            .checked_add(inner.reserved_bytes)
+            .and_then(|accounted| accounted.checked_add(size))
+        else {
+            warn!(
+                "Skipping RAM cache fill for map {} (video={}): byte accounting overflow",
+                key.id, key.video
+            );
+            return None;
+        };
         if accounted > self.capacity {
-            let incoming_priority = retention_priority(&inner, key.id);
+            let incoming_priority = projected_retention_priority(&inner, key.id);
             let mut candidates = inner.entries.iter().collect::<Vec<_>>();
             candidates.sort_by_key(|(candidate, entry)| eviction_order(&inner, candidate, entry));
 
             let mut reclaimed = 0_usize;
             let mut victims = Vec::new();
             for (candidate, entry) in candidates {
-                if retention_priority(&inner, candidate.id) > incoming_priority {
+                let candidate_priority = retention_priority(&inner, candidate.id);
+                if candidate_priority > incoming_priority {
+                    info!(
+                        "Skipping RAM cache fill for map {} (video={}): download priority {:?} cannot displace map {} priority {:?}",
+                        key.id,
+                        key.video,
+                        incoming_priority,
+                        candidate.id,
+                        candidate_priority
+                    );
                     return None;
                 }
                 reclaimed = reclaimed.checked_add(entry.value.bytes.len())?;
@@ -135,14 +173,34 @@ impl SmartCache {
                 }
             }
             if accounted - reclaimed > self.capacity {
+                info!(
+                    "Skipping RAM cache fill for map {} (video={}): insufficient reclaimable capacity",
+                    key.id, key.video
+                );
                 return None;
             }
             for victim in victims {
+                if let Some(entry) = inner.entries.get(&victim) {
+                    info!(
+                        "Evicting map {} (video={}, {} bytes) from RAM cache for map {}",
+                        victim.id,
+                        victim.video,
+                        entry.value.bytes.len(),
+                        key.id
+                    );
+                }
                 remove_entry(&mut inner, victim);
             }
         }
         inner.reserved_bytes += size;
         inner.reservations.insert(key);
+        info!(
+            "Reserved {size} bytes in RAM cache for map {} (video={}); {} / {} bytes accounted",
+            key.id,
+            key.video,
+            inner.used_bytes + inner.reserved_bytes,
+            self.capacity
+        );
 
         Some(FillReservation {
             cache: Arc::clone(self),
@@ -163,8 +221,6 @@ impl SmartCache {
             });
             stat.count = stat.count.saturating_add(1);
             stat.date = now;
-            rebuild_popular(&mut inner);
-            reconcile_policy(&mut inner);
 
             if inner.persist_queued.insert(id) {
                 inner.persist_queue.push_back(id);
@@ -236,8 +292,6 @@ impl SmartCache {
                     stat.count = stat.count.saturating_add(baseline.count);
                     stat.date = stat.date.max(baseline.date);
                     stat.baseline_known = true;
-                    rebuild_popular(&mut inner);
-                    reconcile_policy(&mut inner);
                 }
             }
         }
@@ -269,84 +323,38 @@ impl SmartCache {
     }
 
     pub(crate) async fn refresh_once(&self) -> Result<(), String> {
-        let ranked_query = async {
-            self.meili_client
-                .index("beatmapset")
-                .search()
-                .with_filter("status = 'ranked'")
-                .with_sort(&["ranked_date:desc", "id:asc"])
-                .with_limit(LATEST_RANKED_LIMIT)
-                .execute::<Beatmapset>()
-                .await
-        };
-        let downloads_query = async {
-            self.meili_client
-                .index("downloads")
-                .search()
-                .with_sort(&["count:desc", "date:desc", "id:asc"])
-                .with_limit(POPULAR_DOWNLOAD_LIMIT)
-                .execute::<DownloadIndex>()
-                .await
-        };
-        let (ranked, downloads) = tokio::join!(ranked_query, downloads_query);
-        let mut errors = Vec::new();
-        let latest_ranked = match ranked {
-            Ok(ranked) => Some(
-                ranked
-                    .hits
-                    .into_iter()
-                    .map(|hit| hit.result.mapset_id)
-                    .collect::<Vec<_>>(),
-            ),
-            Err(error) => {
-                errors.push(format!("latest ranked query: {error}"));
-                None
-            }
-        };
-        let downloads = match downloads {
-            Ok(downloads) => Some(
-                downloads
-                    .hits
-                    .into_iter()
-                    .map(|hit| hit.result)
-                    .collect::<Vec<_>>(),
-            ),
-            Err(error) => {
-                errors.push(format!("popular downloads query: {error}"));
-                None
-            }
-        };
-        self.apply_policy(latest_ranked, downloads);
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors.join("; "))
-        }
+        let downloads = self
+            .meili_client
+            .index("downloads")
+            .search()
+            .with_sort(&["count:desc", "date:desc", "id:asc"])
+            .with_limit(DOWNLOAD_STAT_SEED_LIMIT)
+            .execute::<DownloadIndex>()
+            .await
+            .map_err(|error| format!("download statistics query: {error}"))?;
+        let refreshed = downloads.hits.len();
+        self.apply_downloads(downloads.hits.into_iter().map(|hit| hit.result).collect());
+        info!(
+            "Smart-cache background refresh loaded {refreshed} download statistics; tracking {} maps",
+            self.inner.lock().downloads.len()
+        );
+        Ok(())
     }
 
     pub(crate) async fn refresh_loop(self: Arc<Self>) {
         let mut interval = tokio::time::interval(POLICY_REFRESH_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        interval.tick().await;
         loop {
             interval.tick().await;
             if let Err(error) = self.refresh_once().await {
-                warn!(
-                    "Smart-cache policy refresh was incomplete; retaining failed portions: {error}"
-                );
+                warn!("Smart-cache download statistics refresh failed: {error}");
             }
         }
     }
 
-    fn apply_policy(&self, latest_ranked: Option<Vec<i64>>, downloads: Option<Vec<DownloadIndex>>) {
+    fn apply_downloads(&self, downloads: Vec<DownloadIndex>) {
         let mut inner = self.inner.lock();
-        if let Some(latest_ranked) = latest_ranked {
-            inner.latest_ranked = latest_ranked
-                .into_iter()
-                .take(LATEST_RANKED_LIMIT)
-                .collect();
-        }
-        for download in downloads.into_iter().flatten() {
+        for download in downloads {
             let current = inner.downloads.get(&download.id).copied();
             let (count, date) = match current {
                 Some(current) if current.baseline_known => (
@@ -368,13 +376,11 @@ impl SmartCache {
                 },
             );
         }
-        rebuild_popular(&mut inner);
-        reconcile_policy(&mut inner);
     }
 
     #[cfg(test)]
-    fn set_policy_for_test(&self, latest_ranked: Vec<i64>, downloads: Vec<DownloadIndex>) {
-        self.apply_policy(Some(latest_ranked), Some(downloads));
+    fn set_downloads_for_test(&self, downloads: Vec<DownloadIndex>) {
+        self.apply_downloads(downloads);
     }
 
     #[cfg(test)]
@@ -410,25 +416,55 @@ impl FillReservation {
         inner.reservations.remove(&self.key);
         self.active = false;
 
-        if bytes.len() != self.size
-            || !is_eligible(&inner, self.key.id)
-            || inner
-                .used_bytes
-                .checked_add(bytes.len())
-                .is_none_or(|used| used > self.cache.capacity)
-        {
+        if bytes.len() != self.size {
+            warn!(
+                "Discarding RAM cache fill for map {} (video={}): expected {} bytes, received {}",
+                self.key.id,
+                self.key.video,
+                self.size,
+                bytes.len()
+            );
+            return false;
+        }
+        if !inner.downloads.contains_key(&self.key.id) {
+            warn!(
+                "Discarding RAM cache fill for map {} (video={}): completed download was not recorded",
+                self.key.id, self.key.video
+            );
+            return false;
+        }
+        let Some(used_bytes) = inner.used_bytes.checked_add(bytes.len()) else {
+            warn!(
+                "Discarding RAM cache fill for map {} (video={}): byte accounting overflow",
+                self.key.id, self.key.video
+            );
+            return false;
+        };
+        if used_bytes > self.cache.capacity {
+            info!(
+                "Discarding RAM cache fill for map {} (video={}): {used_bytes} bytes would exceed {}-byte capacity",
+                self.key.id, self.key.video, self.cache.capacity
+            );
             return false;
         }
 
         inner.access_clock = inner.access_clock.wrapping_add(1);
         let last_access = inner.access_clock;
-        inner.used_bytes += bytes.len();
+        inner.used_bytes = used_bytes;
         inner.entries.insert(
             self.key,
             RamEntry {
                 value: CacheValue { bytes, cached_at },
                 last_access,
             },
+        );
+        info!(
+            "Cached map {} (video={}) in RAM; {} / {} bytes used across {} entries",
+            self.key.id,
+            self.key.video,
+            inner.used_bytes,
+            self.cache.capacity,
+            inner.entries.len()
         );
         true
     }
@@ -445,68 +481,33 @@ impl Drop for FillReservation {
     }
 }
 
-fn is_eligible(inner: &SmartCacheInner, id: i64) -> bool {
-    inner.latest_ranked.contains(&id) || inner.popular_downloads.contains(&id)
-}
-
-fn rebuild_popular(inner: &mut SmartCacheInner) {
-    let mut downloads = inner
-        .downloads
-        .iter()
-        .map(|(&id, &stat)| (id, stat))
-        .collect::<Vec<_>>();
-    downloads.sort_by_key(|(id, stat)| (Reverse(stat.count), Reverse(stat.date), *id));
-    downloads.truncate(POPULAR_DOWNLOAD_LIMIT);
-    inner.popular_downloads = downloads.iter().map(|(id, _)| *id).collect();
-}
-
-fn reconcile_policy(inner: &mut SmartCacheInner) {
-    let victims = inner
-        .entries
-        .keys()
-        .copied()
-        .filter(|key| !is_eligible(inner, key.id))
-        .collect::<Vec<_>>();
-    for victim in victims {
-        remove_entry(inner, victim);
-    }
-}
-
 fn remove_entry(inner: &mut SmartCacheInner, key: CacheKey) {
     if let Some(entry) = inner.entries.remove(&key) {
         inner.used_bytes = inner.used_bytes.saturating_sub(entry.value.bytes.len());
     }
 }
 
-fn retention_priority(inner: &SmartCacheInner, id: i64) -> (u8, usize) {
-    let ranked = inner
-        .latest_ranked
-        .iter()
-        .position(|candidate| *candidate == id);
-    let popular = inner
-        .popular_downloads
-        .iter()
-        .position(|candidate| *candidate == id);
-    let tier = match (ranked, popular) {
-        (Some(_), Some(_)) => 3_u8,
-        (Some(_), None) => 2,
-        (None, Some(_)) => 1,
-        (None, None) => 0,
-    };
-    let rank_quality = ranked
-        .map(|position| LATEST_RANKED_LIMIT.saturating_sub(position))
-        .unwrap_or_default()
-        + popular
-            .map(|position| POPULAR_DOWNLOAD_LIMIT.saturating_sub(position))
-            .unwrap_or_default();
-    (tier, rank_quality)
+fn retention_priority(inner: &SmartCacheInner, id: i64) -> (u64, i64) {
+    inner
+        .downloads
+        .get(&id)
+        .map(|stat| (stat.count, stat.date))
+        .unwrap_or((0, i64::MIN))
+}
+
+fn projected_retention_priority(inner: &SmartCacheInner, id: i64) -> (u64, i64) {
+    inner
+        .downloads
+        .get(&id)
+        .map(|stat| (stat.count.saturating_add(1), i64::MAX))
+        .unwrap_or((1, i64::MAX))
 }
 
 fn eviction_order(
     inner: &SmartCacheInner,
     key: &CacheKey,
     entry: &RamEntry,
-) -> ((u8, usize), u64, Reverse<i64>, bool) {
+) -> ((u64, i64), u64, Reverse<i64>, bool) {
     (
         retention_priority(inner, key.id),
         entry.last_access,
@@ -533,7 +534,7 @@ mod tests {
     #[test]
     fn variants_are_isolated_and_capacity_counts_reservations() {
         let cache = cache(8);
-        cache.set_policy_for_test(vec![1], vec![]);
+        cache.set_downloads_for_test(vec![download(1, 1, 1)]);
         let video = CacheKey { id: 1, video: true };
         let no_video = CacheKey {
             id: 1,
@@ -560,7 +561,6 @@ mod tests {
     #[test]
     fn dropped_and_concurrent_reservations_never_exceed_capacity() {
         let cache = cache(10);
-        cache.set_policy_for_test(vec![1, 2, 3], vec![]);
         let first = cache
             .reserve_fill(CacheKey { id: 1, video: true }, 6)
             .unwrap();
@@ -578,7 +578,6 @@ mod tests {
     #[test]
     fn duplicate_reservations_are_rejected_without_consuming_capacity() {
         let cache = cache(8);
-        cache.set_policy_for_test(vec![1], vec![]);
         let key = CacheKey { id: 1, video: true };
 
         let fill = cache.reserve_fill(key, 4).unwrap();
@@ -587,6 +586,22 @@ mod tests {
         drop(fill);
         assert_eq!(cache.accounted_bytes(), 0);
         assert!(cache.reserve_fill(key, 8).is_some());
+    }
+
+    #[tokio::test]
+    async fn completed_unseen_download_is_cached_for_the_next_request() {
+        let cache = cache(4);
+        let key = CacheKey {
+            id: 42,
+            video: true,
+        };
+        let fill = cache.reserve_fill(key, 4).unwrap();
+
+        Arc::clone(&cache).record_success(key.id);
+        assert!(fill.commit(Bytes::from_static(b"data"), 10));
+
+        assert_eq!(cache.get(key).unwrap().bytes, "data");
+        assert_eq!(cache.accounted_bytes(), 4);
     }
 
     #[tokio::test]
@@ -600,106 +615,60 @@ mod tests {
     }
 
     #[test]
-    fn lower_priority_admission_never_evicts_higher_priority_entries() {
+    fn lower_download_count_never_evicts_higher_download_counts() {
         let cache = cache(2);
-        cache.set_policy_for_test(vec![1, 2], vec![download(3, 100, 100)]);
-        let best_ranked = CacheKey { id: 1, video: true };
-        let popular = CacheKey { id: 3, video: true };
+        cache.set_downloads_for_test(vec![
+            download(1, 100, 100),
+            download(2, 1, 100),
+            download(3, 50, 100),
+        ]);
+        let most_downloaded = CacheKey { id: 1, video: true };
+        let second_most_downloaded = CacheKey { id: 3, video: true };
         cache
-            .reserve_fill(best_ranked, 1)
+            .reserve_fill(most_downloaded, 1)
             .unwrap()
-            .commit(Bytes::from_static(b"r"), 0);
+            .commit(Bytes::from_static(b"a"), 0);
         cache
-            .reserve_fill(popular, 1)
+            .reserve_fill(second_most_downloaded, 1)
             .unwrap()
-            .commit(Bytes::from_static(b"p"), 0);
+            .commit(Bytes::from_static(b"b"), 0);
 
         assert!(cache
             .reserve_fill(CacheKey { id: 2, video: true }, 2)
             .is_none());
-        assert!(cache.contains(best_ranked));
-        assert!(cache.contains(popular));
+        assert!(cache.contains(most_downloaded));
+        assert!(cache.contains(second_most_downloaded));
         assert_eq!(cache.accounted_bytes(), 2);
     }
 
     #[test]
-    fn policy_keeps_latest_fifty_and_top_thirty_by_count_then_recency() {
-        let cache = cache(1_000);
-        let latest = (1..=50).collect::<Vec<_>>();
-        let downloads = (100..=129)
-            .map(|id| download(id, 1, id))
-            .collect::<Vec<_>>();
-        cache.set_policy_for_test(latest, downloads);
-
-        for id in [1, 50, 100, 129] {
-            let key = CacheKey { id, video: true };
-            cache
-                .reserve_fill(key, 1)
-                .unwrap()
-                .commit(Bytes::from_static(b"x"), 0);
-        }
-        assert!(cache.contains(CacheKey { id: 1, video: true }));
-        assert!(cache.contains(CacheKey {
-            id: 50,
-            video: true
-        }));
-        assert!(cache.contains(CacheKey {
-            id: 100,
-            video: true
-        }));
-        assert!(cache.contains(CacheKey {
-            id: 129,
-            video: true
-        }));
-
-        cache.set_policy_for_test((1..=50).collect(), vec![download(130, 1, 130)]);
-        assert!(!cache.contains(CacheKey {
-            id: 100,
-            video: true
-        }));
+    fn ram_capacity_evicts_the_least_downloaded_maps_by_byte_size() {
+        let cache = cache(4);
+        cache.set_downloads_for_test(vec![
+            download(1, 100, 100),
+            download(2, 1, 100),
+            download(3, 10, 100),
+        ]);
+        let most_downloaded = CacheKey { id: 1, video: true };
+        let least_downloaded = CacheKey { id: 2, video: true };
+        let incoming = CacheKey { id: 3, video: true };
         cache
-            .reserve_fill(
-                CacheKey {
-                    id: 130,
-                    video: true,
-                },
-                1,
-            )
+            .reserve_fill(most_downloaded, 2)
             .unwrap()
-            .commit(Bytes::from_static(b"x"), 0);
-        assert!(cache.contains(CacheKey {
-            id: 130,
-            video: true
-        }));
-
-        cache.set_policy_for_test(
-            (200..=249).collect(),
-            (300..=329).map(|id| download(id, 2, id)).collect(),
-        );
-        assert_eq!(cache.accounted_bytes(), 0);
-    }
-
-    #[test]
-    fn capacity_evicts_popular_before_ranked_deterministically() {
-        let cache = cache(2);
-        cache.set_policy_for_test(vec![1], vec![download(2, 100, 100)]);
+            .commit(Bytes::from_static(b"aa"), 0);
         cache
-            .reserve_fill(CacheKey { id: 2, video: true }, 1)
+            .reserve_fill(least_downloaded, 2)
             .unwrap()
-            .commit(Bytes::from_static(b"p"), 0);
-        cache
-            .reserve_fill(CacheKey { id: 1, video: true }, 1)
-            .unwrap()
-            .commit(Bytes::from_static(b"r"), 0);
-        cache.set_policy_for_test(vec![1, 3], vec![download(2, 100, 100)]);
-        cache
-            .reserve_fill(CacheKey { id: 3, video: true }, 1)
-            .unwrap()
-            .commit(Bytes::from_static(b"n"), 0);
+            .commit(Bytes::from_static(b"bb"), 0);
 
-        assert!(!cache.contains(CacheKey { id: 2, video: true }));
-        assert!(cache.contains(CacheKey { id: 1, video: true }));
-        assert!(cache.contains(CacheKey { id: 3, video: true }));
-        assert_eq!(cache.accounted_bytes(), 2);
+        cache
+            .reserve_fill(incoming, 2)
+            .unwrap()
+            .commit(Bytes::from_static(b"cc"), 0);
+
+        assert!(cache.contains(most_downloaded));
+        assert!(!cache.contains(least_downloaded));
+        assert!(cache.contains(incoming));
+        assert_eq!(cache.accounted_bytes(), 4);
     }
 }

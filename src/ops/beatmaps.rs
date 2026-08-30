@@ -1,7 +1,5 @@
 use std::fmt;
 
-
-
 use crate::{
     crawler::Context,
     osu::types::{Beatmap, Beatmapset},

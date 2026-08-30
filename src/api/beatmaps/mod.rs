@@ -1,4 +1,3 @@
-
 use std::sync::Arc;
 
 use axum::{
@@ -8,7 +7,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     crawler::Context,
-    ops::{beatmaps::{get_beatmap_by_id as get_beatmap_from_db, DatabaseError}, beatmapset::get_beatmapset_by_hash},
+    ops::{
+        beatmaps::{get_beatmap_by_id as get_beatmap_from_db, DatabaseError},
+        beatmapset::get_beatmapset_by_hash,
+    },
     osu::types::{Beatmap, Beatmapset},
 };
 
@@ -23,9 +25,9 @@ async fn get_beatmap_by_id(
         let error = response.unwrap_err();
         return match error {
             DatabaseError::RecordNotFound => return Err(StatusCode::NOT_FOUND),
-            
-            _ => Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
+
+            _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        };
     }
 
     let beatmap = response.unwrap();
@@ -44,9 +46,9 @@ async fn get_beatmap_by_hash(
         let error = response.unwrap_err();
         return match error {
             DatabaseError::RecordNotFound => return Err(StatusCode::NOT_FOUND),
-            
-            _ => Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
+
+            _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        };
     }
 
     let beatmapset = response.unwrap();

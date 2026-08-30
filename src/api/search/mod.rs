@@ -23,7 +23,7 @@ pub enum OsuRuleset {
     #[serde(rename = "fruits")]
     Fruits,
     #[serde(rename = "mania")]
-    Mania
+    Mania,
 }
 
 fn serialize_ruleset(ruleset: OsuRuleset) -> String {
@@ -35,7 +35,6 @@ fn serialize_ruleset(ruleset: OsuRuleset) -> String {
     }
     .to_string()
 }
-
 
 #[derive(Deserialize, Debug)]
 struct SearchQuery {
@@ -53,8 +52,12 @@ async fn search(
     request: Request,
 ) -> Result<Json<Vec<Beatmapset>>, StatusCode> {
     let ctx = ctx.lock().await;
-    let parsed_query =
-        serde_qs::from_str(urlencoding::decode(request.uri().query().unwrap_or("")).unwrap_or("".into()).to_string().as_str());
+    let parsed_query = serde_qs::from_str(
+        urlencoding::decode(request.uri().query().unwrap_or(""))
+            .unwrap_or("".into())
+            .to_string()
+            .as_str(),
+    );
 
     if let Err(_err) = parsed_query {
         return Err(StatusCode::BAD_REQUEST);
@@ -68,11 +71,20 @@ async fn search(
             ["ranked", "loved", "aproved", "qualified"].map(|x| x.to_string()),
         ))
         .join(", ");
-    let modes = parsed_query.modes.unwrap_or(vec![OsuRuleset::Osu, OsuRuleset::Taiko, OsuRuleset::Fruits, OsuRuleset::Mania]).iter().map(
-        |x| {
+    let modes = parsed_query
+        .modes
+        .unwrap_or(vec![
+            OsuRuleset::Osu,
+            OsuRuleset::Taiko,
+            OsuRuleset::Fruits,
+            OsuRuleset::Mania,
+        ])
+        .iter()
+        .map(|x| {
             return format!("(beatmaps.mode = '{}')", serialize_ruleset(x.clone())).to_string();
-        },
-    ).collect::<Vec<String>>().join(" OR ");
+        })
+        .collect::<Vec<String>>()
+        .join(" OR ");
 
     let sorting = match parsed_query
         .sort

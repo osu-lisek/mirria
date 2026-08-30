@@ -514,10 +514,10 @@ fn disk_body(
             let chunk = Bytes::copy_from_slice(&buffer[..read]);
 
             if received == expected_length {
+                complete_download(&mut reservation, &mut completion);
                 if let (Some(fill), Some(fill_bytes)) = (fill.take(), fill_bytes.take()) {
                     fill.commit(Bytes::from(fill_bytes), cached_at);
                 }
-                complete_download(&mut reservation, &mut completion);
                 yield chunk;
                 return;
             }
@@ -576,13 +576,12 @@ fn streaming_cache_miss_body(
             received = next_received;
 
             if expected_length == Some(received) {
-
                 let cached_at =
                     promote_cache_file(&mut temporary_file, &cache_paths, &mut partial).await?;
+                complete_download(&mut reservation, &mut completion);
                 if let (Some(fill), Some(fill_bytes)) = (fill.take(), fill_bytes.take()) {
                     fill.commit(Bytes::from(fill_bytes), cached_at);
                 }
-                complete_download(&mut reservation, &mut completion);
                 yield chunk;
                 return;
             }
@@ -604,10 +603,10 @@ fn streaming_cache_miss_body(
         }
 
         let cached_at = promote_cache_file(&mut temporary_file, &cache_paths, &mut partial).await?;
+        complete_download(&mut reservation, &mut completion);
         if let (Some(fill), Some(fill_bytes)) = (fill.take(), fill_bytes.take()) {
             fill.commit(Bytes::from(fill_bytes), cached_at);
         }
-        complete_download(&mut reservation, &mut completion);
     });
     Body::from_stream(stream)
 }
@@ -632,6 +631,11 @@ async fn download(
 
     if let Some(cached) = state.smart_cache.get(key) {
         if !map_is_stale(last_updated, cached.cached_at, id) {
+            info!(
+                "Serving map {id} from RAM cache (video={}, {} bytes)",
+                key.video,
+                cached.bytes.len()
+            );
             drop(ctx);
             let reservation = match state.rate_limiter.reserve(peer.ip(), CacheKind::Hit) {
                 Ok(reservation) => reservation,
@@ -657,8 +661,13 @@ async fn download(
                 ),
             );
         }
+        info!(
+            "Invalidating stale RAM cache entry for map {id} (video={})",
+            key.video
+        );
         state.smart_cache.invalidate(key);
     }
+    info!("RAM cache miss for map {id} (video={})", key.video);
 
     let cache_path = cache_path(&ctx.config.beatmaps_folder, key);
     let cache_metadata = match fs::metadata(&cache_path).await {
@@ -690,6 +699,14 @@ async fn download(
     let stale = cached_at.is_some_and(|cached_at| map_is_stale(last_updated, cached_at, id));
 
     if cache_exists && !stale {
+        info!(
+            "Serving map {id} from disk cache (video={}, {} bytes)",
+            key.video,
+            cache_metadata
+                .as_ref()
+                .map(std::fs::Metadata::len)
+                .unwrap_or_default()
+        );
         drop(ctx);
         let reservation = match state.rate_limiter.reserve(peer.ip(), CacheKind::Hit) {
             Ok(reservation) => reservation,
@@ -806,7 +823,11 @@ async fn download(
     let remaining = reservation.remaining;
     let reset_after = seconds_until_reset(reservation.reset_at, unix_seconds());
 
-    info!("Streaming map {id} from upstream into cache");
+    info!(
+        "Cache miss for map {id} (video={}); streaming from upstream into disk cache (RAM fill reserved={})",
+        key.video,
+        fill.is_some()
+    );
     let body = streaming_cache_miss_body(
         Box::pin(upstream),
         expected_length,

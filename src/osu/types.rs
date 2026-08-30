@@ -20,7 +20,7 @@ pub struct SearchResponse {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Beatmapset {
-#[serde(rename = "id")]
+    #[serde(rename = "id")]
     pub mapset_id: i64,
 
     pub artist: String,
@@ -159,7 +159,7 @@ pub struct Availability {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Beatmap {
-#[serde(rename = "beatmapset_id")]
+    #[serde(rename = "beatmapset_id")]
     pub mapset_id: i64,
 
     #[serde(rename = "difficulty_rating")]
@@ -169,7 +169,7 @@ pub struct Beatmap {
     pub map_id: i64,
 
     pub mode: String,
-    
+
     #[serde(rename = "mode_int")]
     pub mode_int: i64,
 

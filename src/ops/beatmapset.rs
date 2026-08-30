@@ -4,8 +4,10 @@ use crate::{crawler::Context, osu::types::Beatmapset};
 
 use super::beatmaps::DatabaseError;
 
-
-pub async fn get_beatmapset_by_hash(ctx: Context, checksum: impl ToString) -> Result<Beatmapset, DatabaseError> {
+pub async fn get_beatmapset_by_hash(
+    ctx: Context,
+    checksum: impl ToString,
+) -> Result<Beatmapset, DatabaseError> {
     let response = ctx
         .meili_client
         .index("beatmapset")
@@ -28,7 +30,6 @@ pub async fn get_beatmapset_by_hash(ctx: Context, checksum: impl ToString) -> Re
 
     Ok(beatmapset.clone())
 }
-
 
 pub async fn get_beatmapset_by_id(ctx: Context, id: i64) -> Result<Beatmapset, DatabaseError> {
     let response = ctx
@@ -54,8 +55,10 @@ pub async fn get_beatmapset_by_id(ctx: Context, id: i64) -> Result<Beatmapset, D
     Ok(beatmapset.clone())
 }
 
-
-pub async fn get_beatmapset_by_beatmap_id(ctx: Context, id: i64) -> Result<Beatmapset, DatabaseError> {
+pub async fn get_beatmapset_by_beatmap_id(
+    ctx: Context,
+    id: i64,
+) -> Result<Beatmapset, DatabaseError> {
     let response = ctx
         .meili_client
         .index("beatmapset")
@@ -65,7 +68,6 @@ pub async fn get_beatmapset_by_beatmap_id(ctx: Context, id: i64) -> Result<Beatm
         .await;
 
     if response.is_err() {
-    
         let err = response.unwrap_err();
         error!("{:#?}", err);
         return Err(DatabaseError::InternalDatabaseError);

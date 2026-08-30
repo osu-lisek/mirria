@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use meilisearch_sdk::client::Client;
 use tokio::{sync::Mutex, time};
@@ -13,9 +16,8 @@ use crate::{
 pub struct Context {
     pub config: Arc<Configuration>,
     pub meili_client: Arc<Client>,
-    pub osu: OsuClient
+    pub osu: OsuClient,
 }
-
 
 async fn crawl_search(context: Mutex<Context>) {
     let cursor = Mutex::new(String::new());
@@ -46,7 +48,6 @@ async fn crawl_search(context: Mutex<Context>) {
 
         let beatmaps = beatmaps.unwrap();
 
-
         if Instant::now().duration_since(last_save) > Duration::from_secs(30) {
             last_save = Instant::now();
             let mut config: Configuration = confy::load("mirria", None).unwrap();
@@ -57,10 +58,12 @@ async fn crawl_search(context: Mutex<Context>) {
 
         let crawled_beatmaps = beatmaps.beatmapsets;
         info!("Crawled {} beatmaps", crawled_beatmaps.len());
-     
+
         let index = context.meili_client.index("beatmapset");
 
-        let result = index.add_documents(&crawled_beatmaps.to_vec(), Some("id")).await;
+        let result = index
+            .add_documents(&crawled_beatmaps.to_vec(), Some("id"))
+            .await;
         if result.is_err() {
             error!("{}", result.err().unwrap());
             break;
@@ -68,7 +71,7 @@ async fn crawl_search(context: Mutex<Context>) {
 
         if crawled_beatmaps.len() < 50 {
             info!("End of search reached, waiting 3 minutes for new beatmaps");
-            let _ = time::sleep(Duration::from_secs(60*3)).await;
+            let _ = time::sleep(Duration::from_secs(60 * 3)).await;
             continue;
         }
 
@@ -83,7 +86,5 @@ async fn crawl_search(context: Mutex<Context>) {
 pub async fn serve(context: Context) {
     let crawler_ctx = Mutex::new(context.clone());
 
-    let _ = tokio::try_join!(tokio::spawn(async move {
-        crawl_search(crawler_ctx).await
-    }));
+    let _ = tokio::try_join!(tokio::spawn(async move { crawl_search(crawler_ctx).await }));
 }

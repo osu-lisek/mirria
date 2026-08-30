@@ -1,19 +1,23 @@
-mod config;
-mod osu;
-mod crawler;
 mod api;
+mod config;
+mod crawler;
 mod ops;
+mod osu;
 
-use std::{time::Instant, fs::copy, sync::Arc};
+use std::{fs::copy, sync::Arc, time::Instant};
 
 use clap::Parser;
 use confy::ConfyError;
 use meilisearch_sdk::client::Client;
-use tracing::{info, error, level_filters::LevelFilter};
+use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::{config::{Configuration, CONFIG_VERSION, Config}, crawler::Context, osu::client::log_in_using_credentials};
-use crate::osu::client::{OsuClient, OsuApi};
+use crate::osu::client::{OsuApi, OsuClient};
+use crate::{
+    config::{Config, Configuration, CONFIG_VERSION},
+    crawler::Context,
+    osu::client::log_in_using_credentials,
+};
 
 async fn ensure_index(client: &Client, index: &str, primary_key: &str) -> bool {
     if client.get_index(index).await.is_ok() {
@@ -121,21 +125,21 @@ async fn ensure_sort(client: &Client, index: &str, required: &[&str]) -> bool {
     }
 }
 
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::FmtSubscriber::builder()
-    .with_level(true)
-    .with_max_level(LevelFilter::INFO)
-    .with_file(false)
-    .with_thread_names(false)
-    .finish().init();
+        .with_level(true)
+        .with_max_level(LevelFilter::INFO)
+        .with_file(false)
+        .with_thread_names(false)
+        .finish()
+        .init();
 
     let cfg_path = confy::get_configuration_file_path("mirria", None).unwrap();
     info!("Configuration file path: {}", cfg_path.display());
 
     let cfg: Result<Configuration, ConfyError> = confy::load("mirria", None);
-    
+
     if cfg.is_err() {
         let err = cfg.unwrap_err();
         match err {
@@ -154,7 +158,7 @@ async fn main() {
                 error!("Error while loading configuration");
                 error!("{:#?}", err);
                 return;
-            },
+            }
             _ => {
                 error!("Error while loading configuration");
                 error!("{:#?}", err);
@@ -162,10 +166,9 @@ async fn main() {
             }
         }
     }
-    
 
     let configuration: Configuration = cfg.unwrap();
-    
+
     if configuration.version < CONFIG_VERSION {
         let result = confy::store("config.yml", None, Configuration::default());
         if result.is_err() {
@@ -178,7 +181,6 @@ async fn main() {
         return;
     }
 
-
     if configuration.version > CONFIG_VERSION {
         let config_file = format!("config.bak.{}", Instant::now().elapsed().as_secs());
 
@@ -190,21 +192,23 @@ async fn main() {
             return;
         }
         error!("Configuration version is higher than the current version");
-        error!("Old configuration has been copied to {} and default has been stored to config.yml", config_file);
+        error!(
+            "Old configuration has been copied to {} and default has been stored to config.yml",
+            config_file
+        );
         return;
     }
 
     info!("Configuration has been loaded");
 
-
     let mut access_token = configuration.osu_access_token.clone();
-    let mut refresh_token = configuration.osu_refresh_token.clone();
+    let refresh_token = configuration.osu_refresh_token.clone();
 
     if !configuration.has_authorization() {
         info!("Creating token");
         let configuration: Configuration = configuration.clone();
         let response = log_in_using_credentials(configuration.clone()).await;
-        
+
         if response.is_err() {
             error!("Error while creating token");
             error!("{:#?}", response.unwrap_err());
@@ -215,8 +219,9 @@ async fn main() {
         info!("Token has been created");
     }
 
-    let osu_client = OsuClient::from_tokens(configuration.clone(), access_token, refresh_token).await;    
-    
+    let osu_client =
+        OsuClient::from_tokens(configuration.clone(), access_token, refresh_token).await;
+
     if osu_client.is_err() {
         error!("Error while creating osu client");
         error!("{:#?}", osu_client.unwrap_err());
@@ -224,7 +229,10 @@ async fn main() {
     }
 
     info!("Client has been initialized");
-    let meiliclient = Client::new(configuration.clone().meilisearch.url, Some(configuration.clone().meilisearch.key));
+    let meiliclient = Client::new(
+        configuration.clone().meilisearch.url,
+        Some(configuration.clone().meilisearch.key),
+    );
 
     if meiliclient.is_err() {
         error!("Error while creating meilisearch client");
@@ -273,15 +281,13 @@ async fn main() {
         error!("Required Meilisearch settings could not be applied");
         return;
     }
-    
-
 
     info!("Meiliclient is up and running");
 
     let context = Context {
         config: Arc::new(configuration.clone()),
         meili_client: Arc::new(meiliclient),
-        osu: osu_client.unwrap()
+        osu: osu_client.unwrap(),
     };
 
     let configuration_env: Config = Config::parse();
@@ -289,6 +295,6 @@ async fn main() {
     match configuration_env.app_component.as_str() {
         "crawler" => crawler::serve(context).await,
         "api" => api::serve(context).await,
-        _ => error!("Unknown component")
+        _ => error!("Unknown component"),
     }
 }
