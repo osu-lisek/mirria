@@ -28,8 +28,12 @@ pub fn parse_cache_size(specification: &str, total_host_bytes: u64) -> Result<us
             (amount, 1_000_000_u128)
         } else if let Some(amount) = specification.strip_suffix("GB") {
             (amount, 1_000_000_000_u128)
+        } else if let Some(amount) = specification.strip_suffix('M') {
+            (amount, 1_000_000_u128)
+        } else if let Some(amount) = specification.strip_suffix('G') {
+            (amount, 1_000_000_000_u128)
         } else {
-            return Err("cache_size must end in MB, GB, or %".to_owned());
+            return Err("cache_size must end in M, MB, G, GB, or %".to_owned());
         };
         let amount = amount
             .parse::<u128>()
@@ -109,6 +113,8 @@ mod tests {
     fn cache_size_accepts_decimal_units_and_injected_host_percentages() {
         assert_eq!(parse_cache_size("2048MB", 1).unwrap(), 2_048_000_000);
         assert_eq!(parse_cache_size(" 4gb ", 1).unwrap(), 4_000_000_000);
+        assert_eq!(parse_cache_size("1G", 1).unwrap(), 1_000_000_000);
+        assert_eq!(parse_cache_size("512M", 1).unwrap(), 512_000_000);
         assert_eq!(parse_cache_size("10%", 8_000_000_000).unwrap(), 800_000_000);
         assert_eq!(parse_cache_size("100%", 1234).unwrap(), 1234);
     }

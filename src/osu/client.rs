@@ -1,13 +1,19 @@
 use std::{
     borrow::BorrowMut,
+    collections::VecDeque,
     io::{Error, ErrorKind},
     sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 
 use chrono::Local;
 use confy::ConfyError;
-use reqwest::StatusCode;
+use reqwest::{RequestBuilder, Response, StatusCode};
 use serde_derive::Deserialize;
+use tokio::{
+    sync::Mutex,
+    time::{sleep_until, Instant},
+};
 use tracing::{error, info};
 
 use crate::config::Configuration;
@@ -16,6 +22,56 @@ use super::types::SearchResponse;
 
 static DOWNLOAD_TOKEN_REFRESHING: AtomicBool = AtomicBool::new(false);
 static DOWNLOAD_TOKEN_REFRESHED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+const OSU_REQUEST_LIMIT: usize = 59;
+const OSU_REQUEST_WINDOW: Duration = Duration::from_secs(60);
+static OSU_REQUEST_LIMITER: OsuRequestLimiter =
+    OsuRequestLimiter::new(OSU_REQUEST_LIMIT, OSU_REQUEST_WINDOW);
+
+struct OsuRequestLimiter {
+    request_times: Mutex<VecDeque<Instant>>,
+    limit: usize,
+    window: Duration,
+}
+
+impl OsuRequestLimiter {
+    const fn new(limit: usize, window: Duration) -> Self {
+        Self {
+            request_times: Mutex::const_new(VecDeque::new()),
+            limit,
+            window,
+        }
+    }
+
+    async fn wait(&self) -> Instant {
+        let mut request_times = self.request_times.lock().await;
+        loop {
+            let now = Instant::now();
+            while request_times
+                .front()
+                .is_some_and(|request_at| now.duration_since(*request_at) >= self.window)
+            {
+                request_times.pop_front();
+            }
+
+            if request_times.len() < self.limit {
+                request_times.push_back(now);
+                return now;
+            }
+
+            let retry_at = *request_times
+                .front()
+                .expect("a full request window must contain a request")
+                + self.window;
+            sleep_until(retry_at).await;
+        }
+    }
+}
+
+async fn send_osu_request(request: RequestBuilder) -> reqwest::Result<Response> {
+    OSU_REQUEST_LIMITER.wait().await;
+    request.send().await
+}
 
 struct DownloadTokenRefreshGuard;
 
@@ -81,13 +137,14 @@ pub async fn log_in_using_credentials(config: Configuration) -> Result<TokenResp
         ("scope", "*"),
     ];
 
-    let response = client
-        .post("https://osu.ppy.sh/oauth/token")
-        .header("Accept", "application/json")
-        .form(&params)
-        .send()
-        .await
-        .unwrap();
+    let response = send_osu_request(
+        client
+            .post("https://osu.ppy.sh/oauth/token")
+            .header("Accept", "application/json")
+            .form(&params),
+    )
+    .await
+    .unwrap();
 
     if response.status() != StatusCode::OK {
         return Err(Error::new(
@@ -115,12 +172,13 @@ impl OsuApi for OsuClient {
     async fn fetch_user(&self) -> Result<UserResponse, Error> {
         let client = reqwest::Client::new();
 
-        let response = client
-            .get("https://osu.ppy.sh/api/v2/me")
-            .header("Accept", "application/json")
-            .bearer_auth(self.clone().access_token)
-            .send()
-            .await;
+        let response = send_osu_request(
+            client
+                .get("https://osu.ppy.sh/api/v2/me")
+                .header("Accept", "application/json")
+                .bearer_auth(self.clone().access_token),
+        )
+        .await;
 
         if let Err(_err) = response {
             return Err(Error::new(
@@ -180,14 +238,15 @@ impl OsuApi for OsuClient {
             ("scope", "*"),
         ];
 
-        let response = client
-            .post("https://osu.ppy.sh/oauth/token")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Accept", "application/json")
-            .form(&form)
-            .send()
-            .await
-            .map_err(Error::other)?;
+        let response = send_osu_request(
+            client
+                .post("https://osu.ppy.sh/oauth/token")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "application/json")
+                .form(&form),
+        )
+        .await
+        .map_err(Error::other)?;
 
         if !response.status().is_success() {
             return Err(Error::other("Failed to refresh token"));
@@ -237,18 +296,19 @@ impl OsuApi for OsuClient {
 
         let client = reqwest::Client::new();
 
-        let response = client
-            .get("https://osu.ppy.sh/api/v2/beatmapsets/search")
-            .query(&[
-                ("nsfw", nsfw.to_string()),
-                ("sort", sort),
-                ("s", status),
-                ("cursor_string", cursor_string.unwrap_or(String::new())),
-            ])
-            .bearer_auth(self.clone().access_token)
-            .send()
-            .await
-            .unwrap();
+        let response = send_osu_request(
+            client
+                .get("https://osu.ppy.sh/api/v2/beatmapsets/search")
+                .query(&[
+                    ("nsfw", nsfw.to_string()),
+                    ("sort", sort),
+                    ("s", status),
+                    ("cursor_string", cursor_string.unwrap_or(String::new())),
+                ])
+                .bearer_auth(self.clone().access_token),
+        )
+        .await
+        .unwrap();
 
         // let serialization_response = response.json::<SearchResponse>().await;
         let text = response.text().await.unwrap();
@@ -302,12 +362,13 @@ impl OsuApi for OsuClient {
             }
         }
 
-        reqwest::Client::new()
-            .get(beatmapset_download_url(id, video))
-            .bearer_auth(&self.access_token)
-            .send()
-            .await
-            .map_err(Error::other)
+        send_osu_request(
+            reqwest::Client::new()
+                .get(beatmapset_download_url(id, video))
+                .bearer_auth(&self.access_token),
+        )
+        .await
+        .map_err(Error::other)
     }
 
     async fn refresh_token_if_required(&mut self) -> bool {
@@ -351,7 +412,9 @@ pub(crate) fn beatmapset_download_url(id: i64, video: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::beatmapset_download_url;
+    use std::{sync::Arc, time::Duration};
+
+    use super::{beatmapset_download_url, OsuRequestLimiter};
 
     #[test]
     fn download_url_omits_video_option_by_default_and_uses_official_no_video_flag() {
@@ -363,5 +426,34 @@ mod tests {
             beatmapset_download_url(42, false),
             "https://osu.ppy.sh/api/v2/beatmapsets/42/download?noVideo=1"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_wait_until_sliding_window_capacity_expires() {
+        let limit = 2;
+        let window = Duration::from_millis(20);
+        let limiter = Arc::new(OsuRequestLimiter::new(limit, window));
+
+        let mut requests = Vec::new();
+        for _ in 0..5 {
+            let limiter = Arc::clone(&limiter);
+            requests.push(tokio::spawn(async move { limiter.wait().await }));
+        }
+
+        let mut request_times = Vec::new();
+        for request in requests {
+            request_times.push(request.await.unwrap());
+        }
+        request_times.sort_unstable();
+
+        for (index, request_at) in request_times.iter().enumerate() {
+            let requests_in_window = request_times[index..]
+                .iter()
+                .take_while(|candidate| **candidate < *request_at + window)
+                .count();
+            assert!(requests_in_window <= limit);
+        }
+        assert!(request_times[2].duration_since(request_times[0]) >= window);
+        assert!(request_times[4].duration_since(request_times[0]) >= window.saturating_mul(2));
     }
 }

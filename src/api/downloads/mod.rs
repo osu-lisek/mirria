@@ -298,13 +298,26 @@ struct DownloadQuery {
     video: bool,
 }
 
+fn cache_folder_path(folder: &str) -> PathBuf {
+    let Some(home) = std::env::var_os("HOME") else {
+        return PathBuf::from(folder);
+    };
+    if folder == "~" {
+        return PathBuf::from(home);
+    }
+    folder
+        .strip_prefix("~/")
+        .map(|relative| PathBuf::from(home).join(relative))
+        .unwrap_or_else(|| PathBuf::from(folder))
+}
+
 fn cache_path(folder: &str, key: CacheKey) -> PathBuf {
     let filename = if key.video {
         format!("{}.osz", key.id)
     } else {
         format!("{}_novid.osz", key.id)
     };
-    FilePath::new(folder).join(filename)
+    cache_folder_path(folder).join(filename)
 }
 
 fn cached_timestamp(metadata: &std::fs::Metadata) -> Option<i64> {
@@ -460,6 +473,10 @@ async fn promote_cache_file(
     drop(temporary_file.take());
     fs::rename(&cache_paths.temporary, &cache_paths.final_path).await?;
     partial.disarm();
+    info!(
+        "Saved map archive to disk cache at {}",
+        cache_paths.final_path.display()
+    );
     Ok(Local::now().timestamp())
 }
 
@@ -907,7 +924,7 @@ mod tests {
     }
 
     #[test]
-    fn variants_have_distinct_paths() {
+    fn variants_and_configured_folders_resolve_to_distinct_paths() {
         let video = test_key(42, true);
         let no_video = test_key(42, false);
         assert_eq!(
@@ -917,6 +934,13 @@ mod tests {
         assert_eq!(
             cache_path("/maps", no_video),
             FilePath::new("/maps").join("42_novid.osz")
+        );
+        assert_eq!(cache_path("", video), FilePath::new("42.osz"));
+
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(
+            cache_path("~/.config/mirria/cache", video),
+            home.join(".config/mirria/cache/42.osz")
         );
     }
 
