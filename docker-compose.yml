@@ -26,6 +26,9 @@ services:
       - ./data/beatmaps:/root/data
     environment:
       - APP_COMPONENT=crawler
+    # The shared image probes the API; the crawler has no HTTP listener.
+    healthcheck:
+      disable: true
     networks:
       - mirror
     depends_on:

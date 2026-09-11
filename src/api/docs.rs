@@ -43,6 +43,7 @@ async fn documentation() -> Html<String> {
                                 tr { td class="method" { "GET" } td { a href="#search" { code { "/api/v1/search" } } } td { "Search indexed beatmapsets." } }
                                 tr { td class="method" { "GET" } td { a href="#cache" { code { "/api/v1/cache" } } } td { "Live RAM cache usage and most-downloaded cached beatmapsets." } }
                                 tr { td class="method" { "GET" } td { a href="/cache" { code { "/cache" } } } td { "RAM cache status dashboard." } }
+                                tr { td class="method" { "GET" } td { a href="#health" { code { "/health" } } } td { "Lightweight HTTP liveness probe." } }
                                 tr { td class="method" { "GET" } td { a href="#metrics" { code { "/metrics" } } } td { "Prometheus metrics exposition." } }
                                 tr { td class="method" { "GET" } td { a href="#docs" { code { "/docs" } } } td { "This HTML reference." } }
                             }
@@ -304,6 +305,16 @@ curl -OJ 'https://mirror.example/d/2556827?video=false'"# } }
                         h3 { code { "GET /cache" } }
                         p { "Serves the minimal RAM cache dashboard as " code { "text/html; charset=utf-8" } ". It fetches this endpoint with a limit of 50 and has a manual refresh button." }
                         p { a href="/cache" { "Open RAM cache status" } }
+                    }
+
+                    section id="health" {
+                        h2 { code { "GET /health" } }
+                        p { "Returns " code { "200 OK" } " with the plain-text body " code { "ok" } " once the API is listening. No parameters, authentication, shared-state locks or external dependency requests are required." }
+                        p { "This is an HTTP liveness probe, not a Meilisearch or osu! readiness check. Dependency outages do not change its response while the HTTP server remains responsive." }
+                        h3 { "Docker healthcheck" }
+                        p { "The image checks " code { "http://127.0.0.1:3000/health" } " every 30 seconds using Alpine's bundled wget, with a 3-second request timeout, a 5-second Docker timeout, a 60-second startup grace period and 3 consecutive failures before marking the container unhealthy." }
+                        p { "Docker Compose disables this API-only probe for the crawler, which has no HTTP listener. When running a crawler directly from the shared image, use " code { "docker run --no-healthcheck" } "." }
+                        pre { code { "curl -f 'https://mirror.example/health'" } }
                     }
 
                     section id="metrics" {

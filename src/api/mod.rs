@@ -3,6 +3,7 @@ pub mod beatmapsets;
 pub mod cache;
 pub mod docs;
 pub mod downloads;
+pub mod health;
 pub mod search;
 
 use std::{net::SocketAddr, sync::Arc};
@@ -64,6 +65,7 @@ pub async fn serve(ctx: Context) {
         .merge(crate::api::docs::serve())
         .merge(crate::api::search::serve())
         .merge(crate::api::cache::serve())
+        .merge(crate::api::health::serve())
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .layer(layer_ctx)
         .layer(prometeus_layer);

@@ -20,4 +20,6 @@ RUN apk add --no-cache libgcc ca-certificates
 COPY --from=rust-builder /usr/src/app/target/release/mirria /usr/local/bin/
 
 WORKDIR /usr/local/bin
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
 CMD ["mirria"]
