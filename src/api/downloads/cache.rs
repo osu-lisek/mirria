@@ -62,6 +62,20 @@ pub(crate) struct SmartCache {
     meili_client: Arc<Client>,
 }
 
+pub(crate) struct RamCachedMap {
+    pub(crate) id: i64,
+    pub(crate) download_count: u64,
+    pub(crate) size_bytes: usize,
+}
+
+pub(crate) struct RamCacheSnapshot {
+    pub(crate) used_bytes: usize,
+    pub(crate) reserved_bytes: usize,
+    pub(crate) total_bytes: usize,
+    pub(crate) entry_count: usize,
+    pub(crate) maps: Vec<RamCachedMap>,
+}
+
 pub(crate) struct FillReservation {
     cache: Arc<SmartCache>,
     key: CacheKey,
@@ -76,6 +90,41 @@ impl SmartCache {
             inner: Mutex::new(SmartCacheInner::default()),
             meili_client,
         })
+    }
+
+    pub(crate) fn snapshot(&self) -> RamCacheSnapshot {
+        let inner = self.inner.lock();
+        // Copy only accounting data; observing the cache must not retain payloads
+        // or change the access order used by eviction.
+        let mut snapshot = RamCacheSnapshot {
+            used_bytes: inner.used_bytes,
+            reserved_bytes: inner.reserved_bytes,
+            total_bytes: self.capacity,
+            entry_count: inner.entries.len(),
+            maps: inner
+                .entries
+                .iter()
+                .map(|(key, entry)| RamCachedMap {
+                    id: key.id,
+                    download_count: inner.downloads.get(&key.id).map_or(0, |stat| stat.count),
+                    size_bytes: entry.value.bytes.len(),
+                })
+                .collect(),
+        };
+        drop(inner);
+
+        // Both video variants share one download statistic. Sum their payloads,
+        // not their counts, after releasing the cache lock.
+        snapshot.maps.sort_unstable_by_key(|map| map.id);
+        snapshot.maps.dedup_by(|later, earlier| {
+            if later.id == earlier.id {
+                earlier.size_bytes += later.size_bytes;
+                true
+            } else {
+                false
+            }
+        });
+        snapshot
     }
 
     pub(crate) fn get(&self, key: CacheKey) -> Option<CacheValue> {

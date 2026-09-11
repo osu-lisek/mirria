@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>RAM cache status · mirria</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #202938;
+      background: #f5f7fa;
+      line-height: 1.5;
+      --surface: #fff;
+      --muted: #566276;
+      --border: #d8dfe8;
+      --accent: #185dc9;
+      --warning: #974100;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 1080px; margin: 0 auto; padding: 40px 24px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    h1 { margin: 0; font-size: 1.8rem; letter-spacing: -.03em; }
+    h2 { margin: 0 0 12px; font-size: 1.1rem; }
+    p { margin: 8px 0; }
+    .muted, .detail { color: var(--muted); }
+    .detail { display: block; font-size: .875rem; }
+    button {
+      font: inherit;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 16px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { cursor: wait; opacity: .65; }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    .status-line { margin: 20px 0; font-size: .9rem; }
+    #request-status { font-weight: 600; overflow-wrap: anywhere; }
+    #request-status[data-state="error"] { color: var(--warning); }
+    .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+    .value { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+    progress { display: block; width: 100%; height: 12px; margin: 14px 0; accent-color: var(--accent); }
+    .cache-values { display: flex; flex-wrap: wrap; gap: 16px 36px; margin: 12px 0; }
+    dl, dd { margin: 0; }
+    dt { color: var(--muted); font-size: .9rem; }
+    .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin-top: 16px; }
+    table { border-collapse: collapse; width: 100%; min-width: 440px; text-align: left; }
+    caption { text-align: left; color: var(--muted); padding: 14px 16px; font-size: .875rem; }
+    th, td { padding: 12px 16px; border-top: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-size: .8rem; font-weight: 600; }
+    td { font-size: .9rem; }
+    .number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .map-title { font-weight: 600; overflow-wrap: anywhere; }
+    .map-info { overflow-wrap: anywhere; }
+    .empty { padding: 24px; margin-top: 16px; text-align: center; border: 1px dashed var(--border); border-radius: 10px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 640px) {
+      main { padding: 24px 16px; }
+      h1 { font-size: 1.5rem; }
+      .summary { grid-template-columns: 1fr; }
+      .card { padding: 16px; }
+      header { gap: 12px; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color: #e5eaf2;
+        background: #111722;
+        --surface: #192230;
+        --muted: #acb8cb;
+        --border: #344156;
+        --accent: #8ab8ff;
+        --warning: #ffba85;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>RAM cache status</h1>
+        <p class="muted">mirria · read-only snapshot</p>
+      </div>
+      <button id="refresh" type="button">Refresh</button>
+    </header>
+    <div class="status-line">
+      <p id="request-status" role="status" aria-live="polite">Loading cache status…</p>
+      <p class="muted">Last successful update: <time id="updated">—</time></p>
+    </div>
+    <div id="snapshot" hidden>
+      <section class="summary" aria-label="RAM cache and capacity summary">
+        <div class="card">
+          <h2>RAM cache</h2>
+          <div class="value" id="storage-usage"></div>
+          <p id="storage-reserved"></p>
+          <p class="detail" id="storage-accounted"></p>
+          <progress id="storage-progress" max="1" value="0" aria-label="Accounted cache capacity: used payload plus reserved fills"></progress>
+          <p id="storage-available"></p>
+          <p class="detail">Cache payload and configured budget, not process RSS. Allocator overhead and payloads held only by active responses are excluded.</p>
+        </div>
+        <div class="card">
+          <h2>Cached beatmapsets</h2>
+          <dl class="cache-values">
+            <div><dt>Unique beatmapsets</dt><dd class="value" id="map-count"></dd></div>
+            <div><dt>Variant entries</dt><dd class="value" id="entry-count"></dd></div>
+            <div><dt>Cached payload</dt><dd class="value" id="cache-size"></dd></div>
+          </dl>
+          <p class="detail">Completed cache entries only. Video and no-video variants count separately as entries and are combined into one beatmapset row below.</p>
+        </div>
+      </section>
+      <section aria-labelledby="ranking-title">
+        <h2 id="ranking-title">Most-downloaded cached beatmapsets</h2>
+        <p class="muted">Live counts of known completed downloads. Equal counts are ordered by beatmapset ID.</p>
+        <p class="detail">RAM size is the combined payload length of all cached variants for each beatmapset.</p>
+        <p class="detail" id="metadata-notice" role="status" hidden>Titles and artists are unavailable. Beatmapset IDs, download counts and RAM cache metrics are current for this snapshot.</p>
+        <div id="table-scroll" class="table-scroll" tabindex="0" role="region" aria-label="Cached beatmapsets, scroll horizontally on small screens" hidden>
+          <table>
+            <caption id="table-caption"></caption>
+            <thead>
+              <tr>
+                <th scope="col">Beatmapset</th>
+                <th scope="col" class="number">Downloads</th>
+                <th scope="col" class="number">RAM size</th>
+              </tr>
+            </thead>
+            <tbody id="maps"></tbody>
+          </table>
+        </div>
+        <p id="empty" class="empty" hidden></p>
+      </section>
+    </div>
+  </main>
+  <script>
+    "use strict";
+
+    const refreshButton = document.getElementById("refresh");
+    const requestStatus = document.getElementById("request-status");
+    const snapshot = document.getElementById("snapshot");
+    const numberFormat = new Intl.NumberFormat();
+    const byteFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+    let hasSnapshot = false;
+
+    function bytes(value) {
+      const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return byteFormat.format(value) + " " + units[unit];
+    }
+
+    function render(data) {
+      const storage = data.storage;
+      document.getElementById("storage-usage").textContent = bytes(storage.used_bytes) + " used / " + bytes(storage.total_bytes) + " configured capacity";
+      document.getElementById("storage-reserved").textContent = bytes(storage.reserved_bytes) + " reserved for in-progress fills";
+      document.getElementById("storage-available").textContent = bytes(storage.available_bytes) + " available for new fills";
+      const accounted = storage.used_bytes + storage.reserved_bytes;
+      const accountedLabel = bytes(accounted) + " accounted capacity (used + reserved) / " + bytes(storage.total_bytes);
+      document.getElementById("storage-accounted").textContent = accountedLabel;
+      const progress = document.getElementById("storage-progress");
+      progress.max = Math.max(1, storage.total_bytes);
+      progress.value = accounted;
+      progress.setAttribute("aria-valuetext", accountedLabel);
+      document.getElementById("map-count").textContent = numberFormat.format(data.cache.map_count);
+      document.getElementById("entry-count").textContent = numberFormat.format(data.cache.entry_count);
+      document.getElementById("cache-size").textContent = bytes(data.cache.size_bytes);
+      document.getElementById("metadata-notice").hidden = data.metadata_available;
+
+      const rows = document.createDocumentFragment();
+      data.maps.forEach((map) => {
+        const row = document.createElement("tr");
+        const info = document.createElement("td");
+        const validId = Number.isSafeInteger(map.id) && map.id > 0;
+        const title = document.createElement(validId ? "a" : "span");
+        title.className = "map-title";
+        title.textContent = map.title || "Beatmapset " + map.id;
+        if (validId) title.href = "https://osu.ppy.sh/beatmapsets/" + map.id;
+        info.append(title);
+        if (map.artist) {
+          const artist = document.createElement("span");
+          artist.className = "detail map-info";
+          artist.textContent = map.artist;
+          info.append(artist);
+        }
+        row.append(info);
+
+        const downloads = document.createElement("td");
+        downloads.className = "number";
+        downloads.textContent = numberFormat.format(map.download_count);
+        row.append(downloads);
+        const size = document.createElement("td");
+        size.className = "number";
+        size.textContent = bytes(map.size_bytes);
+        row.append(size);
+        rows.append(row);
+      });
+      document.getElementById("maps").replaceChildren(rows);
+      document.getElementById("table-caption").textContent = "Showing " + numberFormat.format(data.maps.length) + " of " + numberFormat.format(data.cache.map_count) + " cached beatmapsets · up to 50 rows";
+      document.getElementById("table-scroll").hidden = data.maps.length === 0;
+      const empty = document.getElementById("empty");
+      empty.hidden = data.maps.length !== 0;
+      empty.textContent = "No cached beatmapsets yet. In-progress fills are not listed.";
+      snapshot.hidden = false;
+    }
+
+    async function refresh() {
+      refreshButton.disabled = true;
+      refreshButton.textContent = "Refreshing…";
+      requestStatus.dataset.state = "loading";
+      requestStatus.textContent = hasSnapshot ? "Refreshing… showing the previous snapshot." : "Loading cache status…";
+      try {
+        const response = await fetch("/api/v1/cache?limit=50", { cache: "no-store" });
+        let data;
+        try {
+          data = await response.json();
+        } catch {
+          throw new Error("The server returned an unreadable response (HTTP " + response.status + ").");
+        }
+        if (!response.ok) {
+          throw new Error(typeof data.message === "string" ? data.message : "Request failed (HTTP " + response.status + ").");
+        }
+        render(data);
+        hasSnapshot = true;
+        const now = new Date();
+        const updated = document.getElementById("updated");
+        updated.dateTime = now.toISOString();
+        updated.textContent = now.toLocaleString();
+        requestStatus.dataset.state = "ready";
+        requestStatus.textContent = "Snapshot loaded. Refresh to check for changes.";
+      } catch (error) {
+        requestStatus.dataset.state = "error";
+        requestStatus.textContent = (hasSnapshot ? "Stale data — refresh failed. Showing the last successful snapshot. " : "Unable to load cache status. ") + error.message;
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = "Refresh";
+      }
+    }
+
+    refreshButton.addEventListener("click", refresh);
+    refresh();
+  </script>
+</body>
+</html>

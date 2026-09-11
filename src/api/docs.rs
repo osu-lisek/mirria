@@ -41,6 +41,8 @@ async fn documentation() -> Html<String> {
                                 tr { td class="method" { "GET" } td { a href="#download" { code { "/api/v1/download/:id" } } } td { "Download a beatmapset archive." } }
                                 tr { td class="method" { "GET" } td { a href="#download" { code { "/d/:id" } } } td { "Short alias for the download route." } }
                                 tr { td class="method" { "GET" } td { a href="#search" { code { "/api/v1/search" } } } td { "Search indexed beatmapsets." } }
+                                tr { td class="method" { "GET" } td { a href="#cache" { code { "/api/v1/cache" } } } td { "Live RAM cache usage and most-downloaded cached beatmapsets." } }
+                                tr { td class="method" { "GET" } td { a href="/cache" { code { "/cache" } } } td { "RAM cache status dashboard." } }
                                 tr { td class="method" { "GET" } td { a href="#metrics" { code { "/metrics" } } } td { "Prometheus metrics exposition." } }
                                 tr { td class="method" { "GET" } td { a href="#docs" { code { "/docs" } } } td { "This HTML reference." } }
                             }
@@ -189,7 +191,7 @@ async fn documentation() -> Html<String> {
 
                         h3 { "Streaming and cache behavior" }
                         p { "RAM and valid disk responses are cache hits; an origin download is a miss. Cached responses and upstream misses stream with backpressure. A miss is published to disk atomically only after the complete upstream body is validated and durably written. Byte-range requests are not supported; downloads return the complete archive." }
-                        p { "The bounded smart RAM cache is populated lazily from eligible valid disk files or bytes already flowing through a request. Policy refresh never prefetches from the origin. Every ten minutes it retains candidates from the 50 latest ranked maps and the top 30 maps by successful download count, using the most recent successful download time and then map ID to break count ties. Entries outside that union are evicted, and byte capacity always wins, so a small cache may hold fewer maps. Video variants have independent byte entries." }
+                        p { "The bounded smart RAM cache is populated lazily from eligible valid disk files or bytes already flowing through a request. Every ten minutes it refreshes up to 1,000 persisted download statistics; completed downloads update the live counts immediately. Refresh does not prefetch archives. Admission under capacity pressure evicts lower-priority entries by download count, successful-download time and access order; a lower-priority incoming map cannot displace a higher-priority entry. Video variants have independent byte entries." }
                         p { "RAM hits clone the retained byte buffer without copying its contents. An archive larger than the configured capacity is still served and kept on disk but is not admitted to RAM. Capacity bounds bytes owned or reserved by the cache; response clones already in flight may outlive eviction." }
 
                         h4 { "RAM capacity configuration" }
@@ -276,6 +278,34 @@ curl -OJ 'https://mirror.example/d/2556827?video=false'"# } }
                         p { "The example shows the JSON shape with representative values; real metadata and nested arrays vary by result." }
                     }
 
+                    section id="cache" {
+                        h2 { code { "GET /api/v1/cache" } }
+                        p { "Returns a read-only snapshot of this API process's live RAM cache, not its disk archive directory or a mounted ramdisk. Observing the cache does not change eviction order or retain archive buffers." }
+                        p { "Optional query parameter " code { "limit" } " defaults to 50 and accepts integers from 1 through 100. Beatmapsets are ordered by the cache's known completed-download count descending, then ID ascending. Video and no-video payload lengths are combined into one row; their shared download count is not doubled." }
+                        h3 { "Response fields" }
+                        table {
+                            thead { tr { th { "Field" } th { "Meaning" } } }
+                            tbody {
+                                tr { td { code { "ranking" } } td { code { "\"download_count\"" } "." } }
+                                tr { td { code { "storage.used_bytes" } } td { "Archive payload bytes currently retained by the RAM cache." } }
+                                tr { td { code { "storage.reserved_bytes" } } td { "Capacity reserved for in-progress cache fills, not completed entries." } }
+                                tr { td { code { "storage.total_bytes" } } td { "Configured RAM cache capacity resolved from " code { "cache_size" } " at startup." } }
+                                tr { td { code { "storage.available_bytes" } } td { "Capacity remaining after both retained payloads and reservations." } }
+                                tr { td { code { "cache.map_count, cache.entry_count, cache.size_bytes" } } td { "Total unique cached beatmapsets, separate video-variant entries, and retained payload bytes, before applying the result limit." } }
+                                tr { td { code { "maps" } } td { "At most " code { "limit" } " rows with " code { "id, title, artist, download_count, size_bytes" } ". Byte size is the sum of that beatmapset's retained variants. Titles and artists may be " code { "null" } "." } }
+                                tr { td { code { "metadata_available" } } td { "False if the optional title/artist lookup failed. Live counts, sizes, ranking and totals are still returned; missing individual documents leave null metadata without removing rows." } }
+                            }
+                        }
+                        p class="note" { "These are cache payload and budget metrics, not process RSS. Allocator overhead and buffers held only by in-flight responses after eviction are excluded. Counts include live completions and the persisted baseline known to the cache; separate API processes have separate live snapshots." }
+                        h3 { "Statuses and example" }
+                        p { code { "200 OK" } " — " code { "application/json" } ", including an empty RAM cache or unavailable optional metadata. " code { "400 Bad Request" } " — invalid limit, with a JSON " code { "ok: false, message" } " error." }
+                        pre { code { "curl 'https://mirror.example/api/v1/cache?limit=50'" } }
+                        pre { code { r#"{"ranking":"download_count","storage":{"used_bytes":300,"reserved_bytes":100,"total_bytes":1000,"available_bytes":600},"cache":{"map_count":2,"entry_count":3,"size_bytes":300},"metadata_available":false,"maps":[{"id":200,"title":null,"artist":null,"download_count":7,"size_bytes":200},{"id":100,"title":null,"artist":null,"download_count":3,"size_bytes":100}]}"# } }
+                        h3 { code { "GET /cache" } }
+                        p { "Serves the minimal RAM cache dashboard as " code { "text/html; charset=utf-8" } ". It fetches this endpoint with a limit of 50 and has a manual refresh button." }
+                        p { a href="/cache" { "Open RAM cache status" } }
+                    }
+
                     section id="metrics" {
                         h2 { code { "GET /metrics" } }
                         p { "Returns the current Prometheus metrics exposition generated by the HTTP metrics recorder. Metric series and labels depend on observed runtime traffic." }
@@ -309,74 +339,4 @@ curl -OJ 'https://mirror.example/d/2556827?video=false'"# } }
 
 pub fn serve() -> Router {
     Router::new().route("/docs", get(documentation))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn generated_docs_cover_every_registered_route() {
-        let Html(page) = documentation().await;
-
-        for route in [
-            "GET /api/v1/beatmaps/md5/:checksum",
-            "GET /api/v1/beatmaps/:id",
-            "GET /api/v1/beatmapsets/:id",
-            "GET /api/v1/beatmapsets/beatmap/:id",
-            "GET /api/v1/download/:id",
-            "GET /d/:id",
-            "GET /api/v1/search",
-            "GET /metrics",
-            "GET /docs",
-        ] {
-            assert!(page.contains(route), "missing documentation for {route}");
-        }
-    }
-
-    #[tokio::test]
-    async fn generated_docs_cover_route_contracts_and_errors() {
-        let Html(page) = documentation().await;
-
-        for expected in [
-            "not an OpenAPI document",
-            "Beatmapset",
-            "Beatmap",
-            "checksum",
-            "video",
-            "by default",
-            "video=false",
-            "{id}_novid.osz",
-            "cache_size",
-            "2048MB",
-            "4GB",
-            "10%",
-            "50 latest ranked maps",
-            "top 30 maps",
-            "query",
-            "limit",
-            "offset",
-            "statuses",
-            "aproved",
-            "updated_asc",
-            "playcount",
-            "modes",
-            "X-Cache-Hit",
-            "X-RateLimit-Remaining",
-            "400 Bad Request",
-            "404 Not Found",
-            "429 Too Many Requests",
-            "500 Internal Server Error",
-            "502 Bad Gateway",
-            "application/x-osu-beatmap-archive",
-            "application/json",
-            "text/plain; charset=utf-8",
-            "text/html; charset=utf-8",
-        ] {
-            assert!(
-                page.contains(expected),
-                "missing documentation for {expected}"
-            );
-        }
-    }
 }

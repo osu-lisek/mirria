@@ -1,5 +1,6 @@
 pub mod beatmaps;
 pub mod beatmapsets;
+pub mod cache;
 pub mod docs;
 pub mod downloads;
 pub mod search;
@@ -53,6 +54,7 @@ pub async fn serve(ctx: Context) {
             ),
         )
         .layer(Extension(downloads::state(Arc::clone(&smart_cache))))
+        .layer(Extension(smart_cache))
         .layer(Extension(ctx));
 
     let router = Router::new()
@@ -61,6 +63,7 @@ pub async fn serve(ctx: Context) {
         .merge(crate::api::downloads::serve())
         .merge(crate::api::docs::serve())
         .merge(crate::api::search::serve())
+        .merge(crate::api::cache::serve())
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .layer(layer_ctx)
         .layer(prometeus_layer);
